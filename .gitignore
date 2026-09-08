@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Data
+*.sqlite
+*.sqlite3
+*.db
+chroma_db/
+.chroma/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Tracing / logs
+*.log
+traces/
+
+# Frontend
+frontend/react-app/node_modules/
+frontend/react-app/dist/
+frontend/react-app/.vite/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
