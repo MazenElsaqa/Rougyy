@@ -14,7 +14,7 @@ pytest-cov>=5.0
 
 # --- Added in later phases (kept commented until needed) ---
 # sqlglot>=25.0            # Phase 4: AST-based SQL validation
-# google-genai>=0.5        # Phase 5: Gemini structured output / function calling
+# openai>=1.30             # Phase 5: LLM integration (OpenAI-compatible SDK — works with GPT-4o, Gemini, or any provider)
 # chromadb>=0.5            # Phase 11/12: vector store for RAG
 # fastapi>=0.110           # Phase 23: backend API
 # uvicorn[standard]>=0.29  # Phase 23: ASGI server

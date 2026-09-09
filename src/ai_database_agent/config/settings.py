@@ -19,9 +19,14 @@ class Settings(BaseSettings):
     # --- Database ---
     database_url: str = "sqlite:///./data/concert_singer.sqlite"
 
-    # --- Gemini (used starting Phase 5) ---
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-pro"
+    # --- LLM: OpenAI-compatible SDK (Phase 5+) ---
+    # Works with any provider that supports the OpenAI API interface:
+    #   OpenAI:  base_url=None (default), api_key=sk-...
+    #   Gemini:  base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=AIza...
+    #   Ollama:  base_url="http://localhost:11434/v1", api_key="ollama"
+    openai_api_key: str = ""
+    openai_base_url: str | None = None   # None = use OpenAI default
+    llm_model: str = "gpt-4o"
 
     # --- Query execution (Phase 3 timeout) ---
     query_timeout_ms: int = 5000
