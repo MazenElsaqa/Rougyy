@@ -37,6 +37,10 @@ frontend/react-app/node_modules/
 frontend/react-app/dist/
 frontend/react-app/.vite/
 
+# Backend service (Milestone 6, isolated env per experimentalServices)
+backend/.venv/
+backend/__pycache__/
+
 # OS / editor
 .DS_Store
 .idea/

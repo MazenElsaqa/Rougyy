@@ -53,7 +53,10 @@ execution, and execution is read-only.
       every generation attempt, so follow-ups like "what about from
       Canada?" resolve against the previous turn). Maps to the
       original Phase 10.
-- [ ] Milestone 6 — FastAPI backend + React frontend
+- [x] **Milestone 6 — Serving layer** (FastAPI backend exposing the
+      pipeline over HTTP with per-session conversation memory, plus a
+      React + Vite + Tailwind chat UI with a schema sidebar and a SQL
+      / results inspector). Maps to the original Phases 23 and 23b.
 
 See `MILESTONES.md` for details on each milestone.
 
@@ -95,6 +98,24 @@ python main.py --chat
 python scripts/run_eval.py
 ```
 
+### Milestone 6 — web UI
+
+```bash
+# terminal 1: FastAPI backend
+cd backend
+pip install -e .
+uvicorn main:app --reload --port 8000
+
+# terminal 2: React frontend (proxies /api to the backend above)
+cd frontend/react-app
+npm install
+npm run dev
+```
+
+On Vercel, `vercel.json`'s `experimentalServices` wires both up as one
+project (`backend` at `/api`, `frontend` at `/`) — no separate deploy
+step or hardcoded host needed in the frontend code.
+
 Schema inspection prints OpenTelemetry trace spans to the console for
 every step (Phase 1 tracing bootstrap). The question mode additionally
 prints the LLM-generated SQL, the row count returned, and the final
@@ -125,7 +146,10 @@ pytest tests/ -v
 
 ```
 ai-database-agent/
-├── frontend/react-app/        # React UI (Phase 23b)
+├── backend/                   # FastAPI serving layer (Milestone 6, original Phase 23)
+│   ├── main.py
+│   └── pyproject.toml
+├── frontend/react-app/        # React + Vite + Tailwind chat UI (Milestone 6, original Phase 23b)
 ├── src/ai_database_agent/
 │   ├── config/                # Settings (Phase 1)
 │   ├── database/               # Connection, inspector, schema models (Phase 1)
@@ -134,9 +158,9 @@ ai-database-agent/
 │   ├── llm/                       # LLM client, SQL + answer generation (Milestone 1+)
 │   ├── agent/                     # Pipeline / orchestration (Milestone 1+)
 │   ├── memory/                    # Conversation memory (Milestone 5, original Phase 10)
-│   ├── evaluation/                 # Eval dataset + harness (Milestone 2+, pulls Phase 18 forward)
-│   └── api/                         # FastAPI backend (Phase 23+)
+│   └── evaluation/                 # Eval dataset + harness (Milestone 2+, pulls Phase 18 forward)
 ├── tests/
 ├── scripts/
+├── vercel.json                # experimentalServices wiring backend + frontend
 └── main.py
 ```

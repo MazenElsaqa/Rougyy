@@ -218,12 +218,67 @@ Maps to the original Phase 10.
   ordering), and the pipeline appending successful turns, replaying
   them into the next `ask()` call, and never recording a failed turn.
 
-### Milestone 6 — Serving layer
+### Milestone 6 — Serving layer ✅
 
 FastAPI backend (original Phase 23) with streaming responses, plus the
 React chat UI (original Phase 23b) with a SQL-inspection panel for
 transparency. Streamlit (original Phase 22) stays an optional internal
 debug tool, not the production surface.
+
+**Delivered:**
+- `backend/main.py` — FastAPI service wrapping `AgentPipeline` end to
+  end (Milestones 1-5 unchanged): `GET /health`, `GET /schema` (full
+  DB schema for the sidebar), `POST /ask` (runs one question through
+  the pipeline, keyed by a client-supplied `session_id` so follow-ups
+  resolve against Milestone 5 conversation memory), `POST /reset`
+  (drops a session's `Conversation`, backing the UI's "New chat").
+  Session -> `Conversation` state is an in-memory, process-local dict
+  guarded by a lock — sufficient to prove the serving layer end to
+  end; moving it to shared storage (Redis/DB) is a separate concern
+  called out below, not deferred silently.
+  Routes are defined without the `/api` prefix per the Python
+  services convention — Vercel's `routePrefix` strips it before
+  forwarding.
+- `backend/pyproject.toml` — this service's own isolated dependency
+  set (it does not depend on the root project's editable install;
+  `main.py` reaches `ai_database_agent` by adding the repo's `src/`
+  to `sys.path`).
+- `frontend/react-app/` — Vite + React 19 + TypeScript + Tailwind v4
+  chat UI:
+  - `SchemaSidebar` — lists tables/columns/row counts, highlighting
+    whichever tables Milestone 4's linker selected for the latest
+    question.
+  - `ChatMessage` + `Composer` — the conversation surface itself,
+    Enter-to-send (IME/Safari-composition safe), a typing indicator
+    while a question is in flight.
+  - `QueryInspector` — the SQL actually run (collapsible), the linked
+    tables as chips, and the returned rows as a table with row
+    count/timing/truncation — so the natural-language answer is never
+    the only thing a user has to trust.
+  - `lib/api.ts` — typed fetch wrappers for `/schema`, `/ask`,
+    `/reset`, all going through `/api/*` (routed to the backend
+    service in every environment; proxied identically by Vite in
+    dev — no hardcoded host anywhere in the app).
+  - A session id is minted client-side on load and threaded through
+    every `/ask` call; "New chat" calls `/reset` and mints a new one.
+- `vercel.json` — `experimentalServices` wiring both services
+  (`backend` at `/api`, `frontend` at `/`) so this deploys as one
+  Vercel project.
+
+**Not yet done (explicit follow-ups, not silent gaps):**
+- Session/conversation state is in-process memory, not shared
+  storage — fine for a single instance, will not survive multiple
+  server instances or a restart. Move to Redis or the primary DB if
+  this needs to run at more than one replica.
+- `/ask` is a single request/response, not a stream — the original
+  plan called for `sse-starlette` streaming. The pipeline currently
+  returns one `AgentResult` at the end of the retry loop rather than
+  incrementally, so streaming would require restructuring
+  `AgentPipeline.ask()` to yield intermediate state (attempt N
+  started, SQL generated, executing, answering) — worth doing once
+  the UI needs perceived latency improvements on slower models.
+- No auth/rate limiting on the API — fine for local/demo use, not
+  for a publicly deployed instance.
 
 ## Security notes carried forward from the review
 
