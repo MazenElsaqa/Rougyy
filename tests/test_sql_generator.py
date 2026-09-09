@@ -1,4 +1,4 @@
-from ai_database_agent.llm.sql_generator import SQLGenerator
+from ai_database_agent.llm.sql_generator import CorrectionAttempt, SQLGenerator
 
 
 class _FakeMessage:
@@ -62,3 +62,47 @@ def test_sends_schema_and_question_to_llm():
     user_message = client.chat.completions.last_kwargs["messages"][1]["content"]
     assert "How many singers?" in user_message
     assert "CREATE TABLE singer" in user_message
+
+
+def test_generate_with_no_attempts_sends_only_the_initial_turn():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "schema")
+
+    assert len(client.chat.completions.last_kwargs["messages"]) == 2
+
+
+def test_generate_replays_prior_attempts_as_conversation_turns():
+    client = _FakeClient("SELECT COUNT(*) FROM singer")
+    generator = SQLGenerator(client=client)
+    attempts = [
+        CorrectionAttempt(
+            sql="SELECT COUNT(*) FROM singers",
+            error="Query error: no such table: singers",
+        )
+    ]
+
+    generator.generate("How many singers?", "schema", attempts=attempts)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    assert len(messages) == 4
+    assert messages[2] == {"role": "assistant", "content": "SELECT COUNT(*) FROM singers"}
+    assert "no such table: singers" in messages[3]["content"]
+
+
+def test_generate_replays_multiple_attempts_in_order():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    attempts = [
+        CorrectionAttempt(sql="BAD SQL 1", error="error one"),
+        CorrectionAttempt(sql="BAD SQL 2", error="error two"),
+    ]
+
+    generator.generate("question", "schema", attempts=attempts)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    assert len(messages) == 6
+    assert messages[2]["content"] == "BAD SQL 1"
+    assert "error one" in messages[3]["content"]
+    assert messages[4]["content"] == "BAD SQL 2"
+    assert "error two" in messages[5]["content"]

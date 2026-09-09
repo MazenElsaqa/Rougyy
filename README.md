@@ -39,7 +39,10 @@ execution, and execution is read-only.
       accuracy — comparing returned rows, not SQL text). Pulls
       Phase 18 (Evaluation) forward as the regression gate for every
       milestone after it.
-- [ ] Milestone 3 — Self-correction loop
+- [x] **Milestone 3 — Self-correction loop** (SQL validation/execution
+      errors are fed back to the LLM and retried, capped at 3 attempts
+      by default). Pulls Phases 6-9 (query generation & correction)
+      forward as the highest-ROI accuracy feature.
 - [ ] Milestone 4 — Lightweight schema linking
 - [ ] Milestone 5 — Conversation memory
 - [ ] Milestone 6 — FastAPI backend + React frontend
@@ -69,6 +72,7 @@ python scripts/setup_db.py
 python main.py
 
 # Milestone 1 demo: ask a real question end to end
+# (Milestone 3: retries up to 3 times if validation/execution fails)
 python main.py "Which singers are from France?"
 python main.py "How many concerts were held at each stadium?"
 

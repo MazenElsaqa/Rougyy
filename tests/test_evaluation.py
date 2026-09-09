@@ -13,7 +13,7 @@ class _MapSQLGenerator:
     def __init__(self, mapping: dict[str, str]):
         self._mapping = mapping
 
-    def generate(self, question, schema_ddl):
+    def generate(self, question, schema_ddl, attempts=None):
         return self._mapping.get(question)
 
 

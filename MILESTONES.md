@@ -82,13 +82,39 @@ instead of after 12+ more phases.
   scoring logic itself (match / mismatch / invalid / missing SQL /
   aggregate averaging) is verified without needing a live LLM call
 
-### Milestone 3 — Self-correction loop
+### Milestone 3 — Self-correction loop ✅
 
 On SQL validation failure or a DB execution error, feed the error back
 to the LLM with the schema and retry, capped at 2-3 attempts. Maps to
 the original Phases 6-9 (query generation & correction), which were
 under-specified in the original plan — this is the single highest-ROI
 accuracy feature and should not wait behind memory or retrieval.
+
+**Delivered:**
+- `llm/prompts.py` — `CORRECTION_USER_TEMPLATE`, the feedback message
+  that carries the DB/validation error back to the LLM
+- `llm/sql_generator.py` — `CorrectionAttempt` (prior `sql` + `error`)
+  and `SQLGenerator.generate(..., attempts=...)`, which replays each
+  prior attempt as an `assistant` (its SQL) / `user` (the error) turn
+  pair so the model sees exactly what it tried and why it failed
+- `agent/pipeline.py` — `AgentPipeline.ask()` now loops up to
+  `max_attempts` (default 3): validation failures and execution
+  errors are appended to an in-memory attempt history and fed back
+  into the next `generate()` call; the loop stops as soon as a valid,
+  successfully executed query is found. `AgentResult.attempts` reports
+  how many tries were used, so the evaluation harness can track average
+  retries alongside accuracy
+- Tests cover: happy path uses exactly 1 attempt, unsafe SQL is
+  retried and still rejected after exhausting attempts, execution
+  errors exhaust retries and surface the last error, and — the key
+  new behavior — a wrong-table-name SQL on attempt 1 is corrected and
+  succeeds on attempt 2, with the failure message visibly passed back
+  into the next `generate()` call
+
+**Not yet done (carried into later milestones):** the evaluation
+harness does not yet report `avg_retries` in `EvalReport` — add this
+when Milestone 4 or later revisits the harness, since it's now a
+meaningful signal.
 
 ### Milestone 4 — Lightweight schema linking (not vector RAG yet)
 

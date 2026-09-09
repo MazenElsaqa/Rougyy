@@ -1,4 +1,5 @@
-"""Prompt templates for Milestone 1 (SQL generation + answer generation)."""
+"""Prompt templates for Milestone 1 (SQL generation + answer generation)
+and Milestone 3 (self-correction retries)."""
 
 SQL_GENERATION_SYSTEM_PROMPT = """\
 You are a SQL generator for a read-only analytics database.
@@ -11,6 +12,13 @@ Rules:
 - Prefer explicit column names over SELECT *.
 - If the question cannot be answered with the given schema, output exactly: SELECT NULL WHERE 1=0
 """
+
+CORRECTION_USER_TEMPLATE = """\
+That SQL failed with this error:
+{error}
+
+Fix the statement and return ONLY the corrected SQL SELECT statement, \
+following the same rules as before."""
 
 ANSWER_GENERATION_SYSTEM_PROMPT = """\
 You are a helpful assistant that answers questions about a database.
