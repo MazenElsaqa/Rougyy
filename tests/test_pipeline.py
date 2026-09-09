@@ -11,7 +11,7 @@ class _StubSQLGenerator:
         self._sql = sql
         self.calls = []
 
-    def generate(self, question, schema_ddl, attempts=None):
+    def generate(self, question, schema_ddl, attempts=None, exemplars=None):
         # Copy, since `attempts` is the pipeline's mutable history list and
         # keeps growing after this call returns.
         self.calls.append(list(attempts) if attempts else [])
@@ -25,7 +25,7 @@ class _SequenceSQLGenerator:
         self._sqls = list(sqls)
         self.calls = []
 
-    def generate(self, question, schema_ddl, attempts=None):
+    def generate(self, question, schema_ddl, attempts=None, exemplars=None):
         self.calls.append(list(attempts) if attempts else [])
         return self._sqls[len(self.calls) - 1]
 

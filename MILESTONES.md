@@ -116,14 +116,60 @@ harness does not yet report `avg_retries` in `EvalReport` — add this
 when Milestone 4 or later revisits the harness, since it's now a
 meaningful signal.
 
-### Milestone 4 — Lightweight schema linking (not vector RAG yet)
+### Milestone 4 — Lightweight schema linking (not vector RAG yet) ✅
 
-Identify relevant tables/columns via name matching + LLM before
-generation, plus few-shot exemplars and value grounding for filter
-values. Vector-based retrieval (ChromaDB, originally Phases 11-12)
-is deferred until a schema large enough to need it is actually in
+Identify relevant tables/columns via name matching before generation,
+plus few-shot exemplars and value grounding for filter values.
+Vector-based retrieval (ChromaDB, originally Phases 11-12) is
+deferred until a schema large enough to need it is actually in
 scope — for `concert_singer`'s 4 tables it would add latency and
 failure surface with no accuracy benefit.
+
+**Delivered:**
+- `schema/linker.py` — `SchemaLinker`:
+  - `.link(question, schema)` scores each table by token overlap
+    between the question and the table's name/columns, keeps tables
+    with a nonzero score, then expands that set via foreign-key
+    closure (either direction) so join partners aren't dropped just
+    because their own name has no lexical overlap with the question
+    (e.g. "singers" + "concerts" still pulls in `singer_in_concert`).
+    Falls back to the full schema if fewer than `min_tables` (default
+    2) score above zero, since a no-overlap question is safer
+    answered with full context than a narrow wrong guess.
+  - `.value_hints(schema)` returns real distinct values for small
+    categorical TEXT columns (<= 8 distinct values, each <= 40 chars)
+    by querying the live database, so the LLM can match a question's
+    wording to the value as actually stored (e.g. "USA" vs "United
+    States") instead of guessing. Columns that look like free text are
+    skipped automatically.
+- `schema/formatter.py` — `SchemaFormatter.to_ddl_with_value_hints()`
+  appends a `-- Known distinct values for categorical columns:` block
+  to the DDL when hints are available.
+- `llm/exemplars.py` — `SQLExemplar` + `get_default_exemplars()`, four
+  curated (question, SQL) pairs (aggregation, ordering, join +
+  group-by, distinct) deliberately different from the Milestone 2
+  eval dataset so exemplars don't leak the harness's own answers.
+- `llm/sql_generator.py` — `SQLGenerator.generate(..., exemplars=...)`
+  replays each exemplar as a `user`/`assistant` turn pair before the
+  real question, so the model sees the expected output style through
+  worked examples.
+- `agent/pipeline.py` — `AgentPipeline.ask()` now: builds the full
+  schema once (cached), links it down to the question's relevant
+  tables on every call (schemas can differ per question in the same
+  pipeline instance), computes value hints for just the linked
+  tables, and passes both the narrowed DDL and the default exemplars
+  into every `generate()` attempt (including retries). `AgentResult`
+  gained `linked_tables` so the evaluation harness and debugging tools
+  can see which tables were selected for a given question.
+- Tests cover: exemplars are prepended as conversation turns before
+  the question (and omitted entirely when none are given), plus all
+  existing pipeline/generator tests updated for the new `exemplars`
+  parameter.
+
+**Not yet done:** schema linking is not yet reported per-case in
+`EvalReport` (e.g. did narrowing ever drop a table the gold SQL
+needed?) — worth adding if accuracy regressions ever trace back to
+linking rather than generation.
 
 ### Milestone 5 — Conversation memory
 

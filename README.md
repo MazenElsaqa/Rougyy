@@ -43,7 +43,11 @@ execution, and execution is read-only.
       errors are fed back to the LLM and retried, capped at 3 attempts
       by default). Pulls Phases 6-9 (query generation & correction)
       forward as the highest-ROI accuracy feature.
-- [ ] Milestone 4 — Lightweight schema linking
+- [x] **Milestone 4 — Lightweight schema linking** (keyword/FK-closure
+      table selection + categorical value grounding + few-shot
+      exemplars, no vector store). Pulls the useful part of Phases
+      11-12 forward while deferring ChromaDB until schema size
+      justifies it.
 - [ ] Milestone 5 — Conversation memory
 - [ ] Milestone 6 — FastAPI backend + React frontend
 
@@ -73,6 +77,8 @@ python main.py
 
 # Milestone 1 demo: ask a real question end to end
 # (Milestone 3: retries up to 3 times if validation/execution fails)
+# (Milestone 4: schema is linked to relevant tables + few-shot exemplars
+#  + categorical value hints before every generation attempt)
 python main.py "Which singers are from France?"
 python main.py "How many concerts were held at each stadium?"
 
@@ -115,8 +121,7 @@ ai-database-agent/
 │   ├── config/                # Settings (Phase 1)
 │   ├── database/               # Connection, inspector, schema models (Phase 1)
 │   ├── observability/          # Tracing bootstrap (Phase 1)
-│   ├── schema/                  # Schema representation for RAG (Phase 2+)
-│   ├── retrieval/                # Schema linking + RAG (Milestone 4+)
+│   ├── schema/                  # Schema representation + linking (Phase 2+, Milestone 4)
 │   ├── llm/                       # LLM client, SQL + answer generation (Milestone 1+)
 │   ├── agent/                     # Pipeline / orchestration (Milestone 1+)
 │   ├── memory/                    # Conversation memory (Phase 10+)

@@ -1,3 +1,4 @@
+from ai_database_agent.llm.exemplars import SQLExemplar
 from ai_database_agent.llm.sql_generator import CorrectionAttempt, SQLGenerator
 
 
@@ -88,6 +89,34 @@ def test_generate_replays_prior_attempts_as_conversation_turns():
     assert len(messages) == 4
     assert messages[2] == {"role": "assistant", "content": "SELECT COUNT(*) FROM singers"}
     assert "no such table: singers" in messages[3]["content"]
+
+
+def test_generate_with_no_exemplars_sends_only_the_initial_turn():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "schema")
+
+    assert len(client.chat.completions.last_kwargs["messages"]) == 2
+
+
+def test_generate_prepends_exemplars_as_conversation_turns_before_the_question():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    exemplars = [
+        SQLExemplar(question="How many stadiums are there?", sql="SELECT COUNT(*) FROM stadium"),
+        SQLExemplar(question="List all concert themes.", sql="SELECT DISTINCT Theme FROM concert"),
+    ]
+
+    generator.generate("How many singers?", "schema", exemplars=exemplars)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    # system, exemplar1 user/assistant, exemplar2 user/assistant, real question
+    assert len(messages) == 6
+    assert "How many stadiums are there?" in messages[1]["content"]
+    assert messages[2] == {"role": "assistant", "content": "SELECT COUNT(*) FROM stadium"}
+    assert "List all concert themes." in messages[3]["content"]
+    assert messages[4] == {"role": "assistant", "content": "SELECT DISTINCT Theme FROM concert"}
+    assert "How many singers?" in messages[5]["content"]
 
 
 def test_generate_replays_multiple_attempts_in_order():

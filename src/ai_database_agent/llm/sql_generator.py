@@ -12,6 +12,11 @@ pairs for the same question are replayed into the conversation as
 assistant/user turns so the LLM sees exactly what it tried and why
 it failed, then is asked to correct it — the standard self-correction
 pattern for text-to-SQL.
+
+Milestone 4 adds an optional `exemplars` list: a handful of curated
+(question, SQL) pairs replayed as user/assistant turns *before* the
+real question, so the model sees the expected output style through
+worked examples rather than instructions alone.
 """
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ from pydantic import BaseModel
 
 from ai_database_agent.config import get_settings
 from ai_database_agent.llm.client import get_llm_client
+from ai_database_agent.llm.exemplars import SQLExemplar
 from ai_database_agent.llm.prompts import CORRECTION_USER_TEMPLATE, SQL_GENERATION_SYSTEM_PROMPT
 from ai_database_agent.observability.tracing import get_tracer
 
@@ -49,18 +55,26 @@ class SQLGenerator:
         question: str,
         schema_ddl: str,
         attempts: list[CorrectionAttempt] | None = None,
+        exemplars: list[SQLExemplar] | None = None,
     ) -> str:
         with _tracer.start_as_current_span("llm.generate_sql") as span:
             span.set_attribute("llm.model", self._model)
             span.set_attribute("llm.prior_attempts", len(attempts or []))
+            span.set_attribute("llm.exemplar_count", len(exemplars or []))
 
             messages: list[dict[str, str]] = [
                 {"role": "system", "content": SQL_GENERATION_SYSTEM_PROMPT},
+            ]
+            for exemplar in exemplars or []:
+                messages.append({"role": "user", "content": f"Question: {exemplar.question}\n\nSQL:"})
+                messages.append({"role": "assistant", "content": exemplar.sql})
+
+            messages.append(
                 {
                     "role": "user",
                     "content": f"Schema:\n{schema_ddl}\n\nQuestion: {question}\n\nSQL:",
-                },
-            ]
+                }
+            )
             for attempt in attempts or []:
                 messages.append({"role": "assistant", "content": attempt.sql})
                 messages.append(
