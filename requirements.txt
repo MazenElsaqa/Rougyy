@@ -12,11 +12,13 @@ opentelemetry-sdk>=1.24
 pytest>=8.0
 pytest-cov>=5.0
 
-# --- Added in later phases (kept commented until needed) ---
-# sqlglot>=25.0            # Phase 4: AST-based SQL validation
-# openai>=1.30             # Phase 5: LLM integration (OpenAI-compatible SDK — works with GPT-4o, Gemini, or any provider)
-# chromadb>=0.5            # Phase 11/12: vector store for RAG
-# fastapi>=0.110           # Phase 23: backend API
-# uvicorn[standard]>=0.29  # Phase 23: ASGI server
-# sse-starlette>=2.1       # Phase 23: SSE streaming endpoint
+# --- Milestone 1: thin end-to-end skeleton (generate -> validate -> execute -> answer) ---
+sqlglot>=25.0              # AST-based SQL validation (folds Phase 4 into Milestone 1 as a safety layer)
+openai>=1.30               # LLM integration (OpenAI-compatible SDK — works with GPT-4o, Gemini, or any provider)
+
+# --- Added in later milestones (kept commented until needed) ---
+# chromadb>=0.5            # Milestone 4+: vector store for schema RAG (only once schema size justifies it)
+fastapi>=0.110             # Milestone 6: backend API
+uvicorn[standard]>=0.29    # Milestone 6: ASGI server
+# sse-starlette>=2.1       # Future: SSE streaming endpoint
 # streamlit>=1.32          # Phase 22: internal debug tool

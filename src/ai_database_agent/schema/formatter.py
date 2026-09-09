@@ -69,6 +69,27 @@ class SchemaFormatter:
     def table_names(self) -> list[str]:
         return [t.name for t in self._schema.tables]
 
+    def to_ddl_with_value_hints(
+        self,
+        value_hints: dict[str, dict[str, list[str]]] | None,
+        include_samples: bool = True,
+    ) -> str:
+        """
+        Milestone 4 — DDL plus a block of known distinct values for
+        small categorical columns (see schema/linker.py's
+        `SchemaLinker.value_hints`), so the LLM can match a question's
+        wording to the value as actually stored instead of guessing.
+        """
+        ddl = self.to_ddl(include_samples=include_samples)
+        if not value_hints:
+            return ddl
+
+        lines = [ddl, "", "-- Known distinct values for categorical columns:"]
+        for table_name, columns in value_hints.items():
+            for column_name, values in columns.items():
+                lines.append(f"--   {table_name}.{column_name}: {values}")
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

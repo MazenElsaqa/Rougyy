@@ -1,0 +1,192 @@
+from ai_database_agent.llm.exemplars import SQLExemplar
+from ai_database_agent.llm.sql_generator import CorrectionAttempt, SQLGenerator
+from ai_database_agent.memory.conversation import ConversationTurn
+
+
+class _FakeMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMessage(content)
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
+
+
+class _FakeCompletions:
+    def __init__(self, content):
+        self._content = content
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return _FakeResponse(self._content)
+
+
+class _FakeChat:
+    def __init__(self, content):
+        self.completions = _FakeCompletions(content)
+
+
+class _FakeClient:
+    def __init__(self, content):
+        self.chat = _FakeChat(content)
+
+
+def test_extracts_plain_sql():
+    generator = SQLGenerator(client=_FakeClient("SELECT * FROM singer"))
+    sql = generator.generate("List all singers", "CREATE TABLE singer (...)")
+    assert sql == "SELECT * FROM singer"
+
+
+def test_extracts_sql_from_code_fence():
+    generator = SQLGenerator(client=_FakeClient("```sql\nSELECT * FROM singer\n```"))
+    sql = generator.generate("List all singers", "schema")
+    assert sql == "SELECT * FROM singer"
+
+
+def test_strips_sql_label_and_semicolon():
+    generator = SQLGenerator(client=_FakeClient("SQL: SELECT * FROM singer;"))
+    sql = generator.generate("List all singers", "schema")
+    assert sql == "SELECT * FROM singer"
+
+
+def test_sends_schema_and_question_to_llm():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "CREATE TABLE singer (...)")
+
+    user_message = client.chat.completions.last_kwargs["messages"][1]["content"]
+    assert "How many singers?" in user_message
+    assert "CREATE TABLE singer" in user_message
+
+
+def test_generate_with_no_attempts_sends_only_the_initial_turn():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "schema")
+
+    assert len(client.chat.completions.last_kwargs["messages"]) == 2
+
+
+def test_generate_replays_prior_attempts_as_conversation_turns():
+    client = _FakeClient("SELECT COUNT(*) FROM singer")
+    generator = SQLGenerator(client=client)
+    attempts = [
+        CorrectionAttempt(
+            sql="SELECT COUNT(*) FROM singers",
+            error="Query error: no such table: singers",
+        )
+    ]
+
+    generator.generate("How many singers?", "schema", attempts=attempts)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    assert len(messages) == 4
+    assert messages[2] == {"role": "assistant", "content": "SELECT COUNT(*) FROM singers"}
+    assert "no such table: singers" in messages[3]["content"]
+
+
+def test_generate_with_no_exemplars_sends_only_the_initial_turn():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "schema")
+
+    assert len(client.chat.completions.last_kwargs["messages"]) == 2
+
+
+def test_generate_prepends_exemplars_as_conversation_turns_before_the_question():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    exemplars = [
+        SQLExemplar(question="How many stadiums are there?", sql="SELECT COUNT(*) FROM stadium"),
+        SQLExemplar(question="List all concert themes.", sql="SELECT DISTINCT Theme FROM concert"),
+    ]
+
+    generator.generate("How many singers?", "schema", exemplars=exemplars)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    # system, exemplar1 user/assistant, exemplar2 user/assistant, real question
+    assert len(messages) == 6
+    assert "How many stadiums are there?" in messages[1]["content"]
+    assert messages[2] == {"role": "assistant", "content": "SELECT COUNT(*) FROM stadium"}
+    assert "List all concert themes." in messages[3]["content"]
+    assert messages[4] == {"role": "assistant", "content": "SELECT DISTINCT Theme FROM concert"}
+    assert "How many singers?" in messages[5]["content"]
+
+
+def test_generate_replays_multiple_attempts_in_order():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    attempts = [
+        CorrectionAttempt(sql="BAD SQL 1", error="error one"),
+        CorrectionAttempt(sql="BAD SQL 2", error="error two"),
+    ]
+
+    generator.generate("question", "schema", attempts=attempts)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    assert len(messages) == 6
+    assert messages[2]["content"] == "BAD SQL 1"
+    assert "error one" in messages[3]["content"]
+    assert messages[4]["content"] == "BAD SQL 2"
+    assert "error two" in messages[5]["content"]
+
+
+def test_generate_with_no_conversation_turns_sends_only_the_initial_turn():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "schema")
+
+    assert len(client.chat.completions.last_kwargs["messages"]) == 2
+
+
+def test_generate_replays_conversation_turns_before_the_question():
+    client = _FakeClient("SELECT name FROM singer WHERE country = 'Canada'")
+    generator = SQLGenerator(client=client)
+    turns = [
+        ConversationTurn(
+            question="Which singers are from France?",
+            sql="SELECT name FROM singer WHERE country = 'France'",
+            answer="Found 3 singers from France.",
+        )
+    ]
+
+    generator.generate("What about from Canada?", "schema", conversation_turns=turns)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    assert len(messages) == 4
+    assert "Which singers are from France?" in messages[1]["content"]
+    assert messages[2] == {
+        "role": "assistant",
+        "content": "SELECT name FROM singer WHERE country = 'France'",
+    }
+    assert "What about from Canada?" in messages[3]["content"]
+
+
+def test_generate_orders_exemplars_conversation_turns_and_attempts():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    exemplars = [SQLExemplar(question="exemplar Q", sql="exemplar SQL")]
+    turns = [ConversationTurn(question="prior Q", sql="prior SQL", answer="prior answer")]
+    attempts = [CorrectionAttempt(sql="bad SQL", error="bad error")]
+
+    generator.generate(
+        "real question", "schema", attempts=attempts, exemplars=exemplars, conversation_turns=turns
+    )
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    # system, exemplar(2), conversation turn(2), question(1), attempt(2)
+    assert len(messages) == 8
+    assert "exemplar Q" in messages[1]["content"]
+    assert messages[2]["content"] == "exemplar SQL"
+    assert "prior Q" in messages[3]["content"]
+    assert messages[4]["content"] == "prior SQL"
+    assert "real question" in messages[5]["content"]
+    assert messages[6]["content"] == "bad SQL"
+    assert "bad error" in messages[7]["content"]
