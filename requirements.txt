@@ -18,7 +18,7 @@ openai>=1.30               # LLM integration (OpenAI-compatible SDK — works wi
 
 # --- Added in later milestones (kept commented until needed) ---
 # chromadb>=0.5            # Milestone 4+: vector store for schema RAG (only once schema size justifies it)
-# fastapi>=0.110           # Phase 23: backend API
-# uvicorn[standard]>=0.29  # Phase 23: ASGI server
-# sse-starlette>=2.1       # Phase 23: SSE streaming endpoint
+fastapi>=0.110             # Milestone 6: backend API
+uvicorn[standard]>=0.29    # Milestone 6: ASGI server
+# sse-starlette>=2.1       # Future: SSE streaming endpoint
 # streamlit>=1.32          # Phase 22: internal debug tool
