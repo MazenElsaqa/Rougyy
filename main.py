@@ -1,13 +1,20 @@
 """
 Entry point / demo for the phases and milestones implemented so far.
 
-Two modes:
+Three modes:
   python main.py                    -> Phase 1 demo: inspect the schema
                                         and print a summary.
-  python main.py "your question"    -> Milestone 1: run the full
-                                        ask() pipeline (LLM generates
-                                        SQL, it's validated, executed
-                                        read-only, and answered).
+  python main.py "your question"    -> Milestone 1: run one question
+                                        through the full ask() pipeline
+                                        (LLM generates SQL, it's
+                                        validated, executed read-only,
+                                        and answered). No memory across
+                                        separate runs of this command.
+  python main.py --chat             -> Milestone 5: an interactive REPL
+                                        that keeps a Conversation across
+                                        turns, so follow-ups like "what
+                                        about just from Canada?" resolve
+                                        against the previous turn.
 
 Tracing (Phase 1) is bootstrapped first so every span from here on is
 captured, whichever mode runs.
@@ -18,6 +25,7 @@ import sys
 
 from ai_database_agent.agent import AgentPipeline
 from ai_database_agent.database import DatabaseInspector, get_engine
+from ai_database_agent.memory import Conversation
 from ai_database_agent.observability.tracing import get_tracer, setup_tracing
 
 setup_tracing()
@@ -61,8 +69,39 @@ def ask_demo(question: str) -> None:
         print(f"Answer: {result.answer}")
 
 
+def chat_demo() -> None:
+    with tracer.start_as_current_span("main.chat_demo"):
+        pipeline = AgentPipeline()
+        conversation = Conversation()
+
+        print("Chat mode - type a question, or 'exit' / Ctrl-D to quit.")
+        print("Conversation memory is kept across turns in this session.\n")
+
+        while True:
+            try:
+                question = input("> ").strip()
+            except EOFError:
+                print()
+                break
+            if not question:
+                continue
+            if question.lower() in {"exit", "quit"}:
+                break
+
+            result = pipeline.ask(question, conversation=conversation)
+
+            if result.sql:
+                print(f"  SQL: {result.sql}")
+            if not result.success:
+                print(f"  Error: {result.error}\n")
+                continue
+            print(f"  Answer: {result.answer}\n")
+
+
 def main() -> None:
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1] == "--chat":
+        chat_demo()
+    elif len(sys.argv) > 1:
         ask_demo(" ".join(sys.argv[1:]))
     else:
         inspect_demo()

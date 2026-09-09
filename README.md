@@ -48,7 +48,11 @@ execution, and execution is read-only.
       exemplars, no vector store). Pulls the useful part of Phases
       11-12 forward while deferring ChromaDB until schema size
       justifies it.
-- [ ] Milestone 5 — Conversation memory
+- [x] **Milestone 5 — Conversation memory** (a bounded window of
+      recent turns is folded into schema linking and replayed into
+      every generation attempt, so follow-ups like "what about from
+      Canada?" resolve against the previous turn). Maps to the
+      original Phase 10.
 - [ ] Milestone 6 — FastAPI backend + React frontend
 
 See `MILESTONES.md` for details on each milestone.
@@ -81,6 +85,11 @@ python main.py
 #  + categorical value hints before every generation attempt)
 python main.py "Which singers are from France?"
 python main.py "How many concerts were held at each stadium?"
+
+# Milestone 5: interactive chat mode with conversation memory across turns
+# e.g. ask "Which singers are from France?" then follow up with
+# "What about from Canada?" and it resolves against the prior turn
+python main.py --chat
 
 # Milestone 2: run the evaluation harness against the held-out set
 python scripts/run_eval.py
@@ -124,7 +133,7 @@ ai-database-agent/
 │   ├── schema/                  # Schema representation + linking (Phase 2+, Milestone 4)
 │   ├── llm/                       # LLM client, SQL + answer generation (Milestone 1+)
 │   ├── agent/                     # Pipeline / orchestration (Milestone 1+)
-│   ├── memory/                    # Conversation memory (Phase 10+)
+│   ├── memory/                    # Conversation memory (Milestone 5, original Phase 10)
 │   ├── evaluation/                 # Eval dataset + harness (Milestone 2+, pulls Phase 18 forward)
 │   └── api/                         # FastAPI backend (Phase 23+)
 ├── tests/

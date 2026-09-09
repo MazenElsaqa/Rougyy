@@ -2,6 +2,7 @@ from sqlalchemy import create_engine
 
 from ai_database_agent.agent.pipeline import AgentPipeline
 from ai_database_agent.database.validator import SQLValidator
+from ai_database_agent.memory import Conversation
 
 
 class _StubSQLGenerator:
@@ -10,11 +11,13 @@ class _StubSQLGenerator:
     def __init__(self, sql):
         self._sql = sql
         self.calls = []
+        self.conversation_calls = []
 
-    def generate(self, question, schema_ddl, attempts=None, exemplars=None):
-        # Copy, since `attempts` is the pipeline's mutable history list and
-        # keeps growing after this call returns.
+    def generate(self, question, schema_ddl, attempts=None, exemplars=None, conversation_turns=None):
+        # Copy, since `attempts`/`conversation_turns` are mutable lists that
+        # keep growing after this call returns.
         self.calls.append(list(attempts) if attempts else [])
+        self.conversation_calls.append(list(conversation_turns) if conversation_turns else [])
         return self._sql
 
 
@@ -24,9 +27,11 @@ class _SequenceSQLGenerator:
     def __init__(self, sqls):
         self._sqls = list(sqls)
         self.calls = []
+        self.conversation_calls = []
 
-    def generate(self, question, schema_ddl, attempts=None, exemplars=None):
+    def generate(self, question, schema_ddl, attempts=None, exemplars=None, conversation_turns=None):
         self.calls.append(list(attempts) if attempts else [])
+        self.conversation_calls.append(list(conversation_turns) if conversation_turns else [])
         return self._sqls[len(self.calls) - 1]
 
 
@@ -36,10 +41,14 @@ class _StubAnswerGenerator:
 
 
 def _pipeline(sql, max_attempts=3):
+    return _pipeline_with_generator(_StubSQLGenerator(sql), max_attempts=max_attempts)
+
+
+def _pipeline_with_generator(sql_generator, max_attempts=3):
     engine = create_engine("sqlite:///./data/concert_singer.sqlite", future=True)
     return AgentPipeline(
         engine=engine,
-        sql_generator=_StubSQLGenerator(sql),
+        sql_generator=sql_generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
         max_attempts=max_attempts,
@@ -143,3 +152,61 @@ def test_ask_stops_retrying_as_soon_as_a_valid_result_is_returned():
     assert outcome.success
     assert outcome.attempts == 1
     assert len(generator.calls) == 1
+
+
+def test_ask_without_conversation_sends_no_conversation_turns():
+    generator = _StubSQLGenerator("SELECT name FROM singer WHERE country = 'France'")
+    _pipeline_with_generator(generator).ask("Which singers are from France?")
+
+    assert generator.conversation_calls == [[]]
+
+
+def test_ask_with_conversation_appends_successful_turn():
+    generator = _StubSQLGenerator("SELECT name FROM singer WHERE country = 'France'")
+    pipeline = _pipeline_with_generator(generator)
+    conversation = Conversation()
+
+    result = pipeline.ask("Which singers are from France?", conversation=conversation)
+
+    assert result.success
+    assert len(conversation.turns) == 1
+    assert conversation.turns[0].question == "Which singers are from France?"
+    assert conversation.turns[0].sql == "SELECT name FROM singer WHERE country = 'France'"
+    assert conversation.turns[0].answer == result.answer
+
+
+def test_ask_with_conversation_replays_prior_turns_into_generation():
+    generator = _SequenceSQLGenerator(
+        [
+            "SELECT name FROM singer WHERE country = 'France'",
+            "SELECT name FROM singer WHERE country = 'Canada'",
+        ]
+    )
+    pipeline = _pipeline_with_generator(generator)
+    conversation = Conversation()
+
+    pipeline.ask("Which singers are from France?", conversation=conversation)
+    pipeline.ask("What about from Canada?", conversation=conversation)
+
+    # Second call was given the first turn's question/SQL as conversation history.
+    assert len(generator.conversation_calls[1]) == 1
+    assert generator.conversation_calls[1][0].question == "Which singers are from France?"
+    assert generator.conversation_calls[1][0].sql == "SELECT name FROM singer WHERE country = 'France'"
+
+
+def test_ask_with_conversation_does_not_record_a_failed_turn():
+    generator = _StubSQLGenerator("DROP TABLE singer")
+    engine = create_engine("sqlite:///./data/concert_singer.sqlite", future=True)
+    pipeline = AgentPipeline(
+        engine=engine,
+        sql_generator=generator,
+        answer_generator=_StubAnswerGenerator(),
+        validator=SQLValidator(),
+        max_attempts=1,
+    )
+    conversation = Conversation()
+
+    result = pipeline.ask("Delete everything", conversation=conversation)
+
+    assert not result.success
+    assert conversation.turns == []

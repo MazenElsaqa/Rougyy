@@ -17,6 +17,13 @@ Milestone 4 adds an optional `exemplars` list: a handful of curated
 (question, SQL) pairs replayed as user/assistant turns *before* the
 real question, so the model sees the expected output style through
 worked examples rather than instructions alone.
+
+Milestone 5 adds an optional `conversation_turns` list: prior
+(question, sql) pairs from the *same conversation* (not curated
+exemplars) replayed the same way, immediately before the real
+question, so a follow-up like "what about just from Canada?" or
+"and how many of those?" can be resolved against what was actually
+already asked and answered rather than starting from a blank slate.
 """
 from __future__ import annotations
 
@@ -28,6 +35,7 @@ from ai_database_agent.config import get_settings
 from ai_database_agent.llm.client import get_llm_client
 from ai_database_agent.llm.exemplars import SQLExemplar
 from ai_database_agent.llm.prompts import CORRECTION_USER_TEMPLATE, SQL_GENERATION_SYSTEM_PROMPT
+from ai_database_agent.memory.conversation import ConversationTurn
 from ai_database_agent.observability.tracing import get_tracer
 
 _tracer = get_tracer(__name__)
@@ -56,11 +64,13 @@ class SQLGenerator:
         schema_ddl: str,
         attempts: list[CorrectionAttempt] | None = None,
         exemplars: list[SQLExemplar] | None = None,
+        conversation_turns: list[ConversationTurn] | None = None,
     ) -> str:
         with _tracer.start_as_current_span("llm.generate_sql") as span:
             span.set_attribute("llm.model", self._model)
             span.set_attribute("llm.prior_attempts", len(attempts or []))
             span.set_attribute("llm.exemplar_count", len(exemplars or []))
+            span.set_attribute("llm.conversation_turn_count", len(conversation_turns or []))
 
             messages: list[dict[str, str]] = [
                 {"role": "system", "content": SQL_GENERATION_SYSTEM_PROMPT},
@@ -68,6 +78,10 @@ class SQLGenerator:
             for exemplar in exemplars or []:
                 messages.append({"role": "user", "content": f"Question: {exemplar.question}\n\nSQL:"})
                 messages.append({"role": "assistant", "content": exemplar.sql})
+
+            for turn in conversation_turns or []:
+                messages.append({"role": "user", "content": f"Question: {turn.question}\n\nSQL:"})
+                messages.append({"role": "assistant", "content": turn.sql})
 
             messages.append(
                 {

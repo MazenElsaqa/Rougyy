@@ -171,10 +171,52 @@ failure surface with no accuracy benefit.
 needed?) — worth adding if accuracy regressions ever trace back to
 linking rather than generation.
 
-### Milestone 5 — Conversation memory
+### Milestone 5 — Conversation memory ✅
 
 Resolve references like "what about the previous city?" across turns.
 Maps to the original Phase 10.
+
+**Delivered:**
+- `memory/conversation.py` — `ConversationTurn` (question + sql +
+  answer) and `Conversation`: a bounded window (default: last 5
+  turns) of recent turns, with `.add_turn()`, `.recent()` (returns a
+  copy, not a live reference), and `.context_text()` (the turns'
+  questions joined, used for schema linking). Intentionally a thin
+  window rather than a full transcript or a summarization step —
+  those are meaningful upgrades but not needed to prove
+  reference-resolution end to end, and an unbounded transcript would
+  grow every prompt indefinitely.
+- `llm/sql_generator.py` — `SQLGenerator.generate(...,
+  conversation_turns=...)` replays each prior turn as a
+  `user`/`assistant` pair, using the same replay pattern already
+  used for exemplars and self-correction attempts. Message order is:
+  system -> exemplars -> conversation turns -> real question ->
+  correction attempts, so the most model-relevant, most-recent
+  context (the actual retry feedback for *this* question) stays
+  closest to the question being asked.
+- `agent/pipeline.py` — `AgentPipeline.ask(question, conversation=...)`
+  is now optional-memory-aware end to end:
+  - Schema linking scores against the *combined* text of recent
+    turns' questions plus the current question, not the current
+    question alone — so a short follow-up like "what about from
+    Canada?" that shares no words with `singer`/`stadium`/etc. still
+    pulls in the tables the conversation has actually been about.
+  - Every generation attempt (including retries) receives the
+    conversation's recent turns via `conversation_turns=`.
+  - On a successful answer, the turn is appended in place to the
+    same `Conversation` the caller passed in — no failed turn is
+    ever recorded, so a bad attempt can't poison future turns.
+  - Callers that don't pass a `Conversation` get identical behavior
+    to before Milestone 5 (no conversation turns sent, linking uses
+    only the current question).
+- `main.py --chat` — an interactive REPL that keeps one
+  `Conversation` for the whole session, so follow-up questions can
+  be tried by hand end to end.
+- Tests cover: `Conversation`'s window/eviction/copy-not-reference
+  behavior in isolation, `SQLGenerator` replaying conversation turns
+  (alone, and combined with exemplars + attempts, verifying message
+  ordering), and the pipeline appending successful turns, replaying
+  them into the next `ask()` call, and never recording a failed turn.
 
 ### Milestone 6 — Serving layer
 

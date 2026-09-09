@@ -25,11 +25,21 @@ store, since concert_singer's 4 tables don't need one yet. A handful
 of few-shot (question, SQL) exemplars (see llm/exemplars.py) are also
 included on every attempt to demonstrate the expected output style.
 
-Still no memory here — that remains a later milestone. On exhausting
-all attempts, this returns an AgentResult with `error` set to the
-last failure, plus `attempts` set to how many tries were made, so the
-evaluation harness (Milestone 2) can track average retries alongside
-accuracy.
+On exhausting all attempts, this returns an AgentResult with `error`
+set to the last failure, plus `attempts` set to how many tries were
+made, so the evaluation harness (Milestone 2) can track average
+retries alongside accuracy.
+
+Milestone 5 adds optional conversation memory (see
+memory/conversation.py): if a `Conversation` is passed to `ask()`,
+recent turns' text is folded into schema linking (so a follow-up
+that shares no words with the current schema still pulls in the
+tables the conversation has been about), and the turns' (question,
+sql) pairs are replayed into every generation attempt so a follow-up
+like "what about just from Canada?" resolves against what was
+actually already asked. On success, the turn is appended in place to
+the same `Conversation` object the caller passed in, so it is ready
+to reuse on the next `ask()` call without any extra bookkeeping.
 """
 from __future__ import annotations
 
@@ -44,6 +54,7 @@ from ai_database_agent.database.validator import SQLValidator, ValidationResult
 from ai_database_agent.llm.answer_generator import AnswerGenerator
 from ai_database_agent.llm.exemplars import SQLExemplar, get_default_exemplars
 from ai_database_agent.llm.sql_generator import CorrectionAttempt, SQLGenerator
+from ai_database_agent.memory.conversation import Conversation
 from ai_database_agent.observability.tracing import get_tracer
 from ai_database_agent.schema.formatter import SchemaFormatter
 from ai_database_agent.schema.linker import SchemaLinker
@@ -93,11 +104,18 @@ class AgentPipeline:
         self._max_attempts = max_attempts
         self._full_schema: DatabaseSchema | None = None  # lazily built, cached for this pipeline's lifetime
 
-    def ask(self, question: str) -> AgentResult:
+    def ask(self, question: str, conversation: Conversation | None = None) -> AgentResult:
         with _tracer.start_as_current_span("agent.ask") as span:
             span.set_attribute("agent.question", question)
 
-            linked_schema = self._linker.link(question, self._get_full_schema())
+            conversation_turns = conversation.recent() if conversation else []
+            span.set_attribute("agent.conversation_turns", len(conversation_turns))
+
+            linking_text = question
+            if conversation and not conversation.is_empty():
+                linking_text = f"{conversation.context_text()} {question}"
+
+            linked_schema = self._linker.link(linking_text, self._get_full_schema())
             value_hints = self._linker.value_hints(linked_schema)
             schema_ddl = SchemaFormatter(linked_schema).to_ddl_with_value_hints(value_hints)
             linked_tables = [t.name for t in linked_schema.tables]
@@ -110,7 +128,11 @@ class AgentPipeline:
 
             for attempt_number in range(1, self._max_attempts + 1):
                 sql = self._sql_generator.generate(
-                    question, schema_ddl, attempts=history, exemplars=self._exemplars
+                    question,
+                    schema_ddl,
+                    attempts=history,
+                    exemplars=self._exemplars,
+                    conversation_turns=conversation_turns,
                 )
                 last_sql = sql or last_sql
 
@@ -138,6 +160,8 @@ class AgentPipeline:
 
                 answer = self._answer_generator.generate(question, sql, query_result)
                 span.set_attribute("agent.attempts", attempt_number)
+                if conversation is not None:
+                    conversation.add_turn(question, sql, answer)
                 return AgentResult(
                     question=question,
                     sql=sql,

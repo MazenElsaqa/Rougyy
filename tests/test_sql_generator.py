@@ -1,5 +1,6 @@
 from ai_database_agent.llm.exemplars import SQLExemplar
 from ai_database_agent.llm.sql_generator import CorrectionAttempt, SQLGenerator
+from ai_database_agent.memory.conversation import ConversationTurn
 
 
 class _FakeMessage:
@@ -135,3 +136,57 @@ def test_generate_replays_multiple_attempts_in_order():
     assert "error one" in messages[3]["content"]
     assert messages[4]["content"] == "BAD SQL 2"
     assert "error two" in messages[5]["content"]
+
+
+def test_generate_with_no_conversation_turns_sends_only_the_initial_turn():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    generator.generate("How many singers?", "schema")
+
+    assert len(client.chat.completions.last_kwargs["messages"]) == 2
+
+
+def test_generate_replays_conversation_turns_before_the_question():
+    client = _FakeClient("SELECT name FROM singer WHERE country = 'Canada'")
+    generator = SQLGenerator(client=client)
+    turns = [
+        ConversationTurn(
+            question="Which singers are from France?",
+            sql="SELECT name FROM singer WHERE country = 'France'",
+            answer="Found 3 singers from France.",
+        )
+    ]
+
+    generator.generate("What about from Canada?", "schema", conversation_turns=turns)
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    assert len(messages) == 4
+    assert "Which singers are from France?" in messages[1]["content"]
+    assert messages[2] == {
+        "role": "assistant",
+        "content": "SELECT name FROM singer WHERE country = 'France'",
+    }
+    assert "What about from Canada?" in messages[3]["content"]
+
+
+def test_generate_orders_exemplars_conversation_turns_and_attempts():
+    client = _FakeClient("SELECT 1")
+    generator = SQLGenerator(client=client)
+    exemplars = [SQLExemplar(question="exemplar Q", sql="exemplar SQL")]
+    turns = [ConversationTurn(question="prior Q", sql="prior SQL", answer="prior answer")]
+    attempts = [CorrectionAttempt(sql="bad SQL", error="bad error")]
+
+    generator.generate(
+        "real question", "schema", attempts=attempts, exemplars=exemplars, conversation_turns=turns
+    )
+
+    messages = client.chat.completions.last_kwargs["messages"]
+    # system, exemplar(2), conversation turn(2), question(1), attempt(2)
+    assert len(messages) == 8
+    assert "exemplar Q" in messages[1]["content"]
+    assert messages[2]["content"] == "exemplar SQL"
+    assert "prior Q" in messages[3]["content"]
+    assert messages[4]["content"] == "prior SQL"
+    assert "real question" in messages[5]["content"]
+    assert messages[6]["content"] == "bad SQL"
+    assert "bad error" in messages[7]["content"]
