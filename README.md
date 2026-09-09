@@ -34,7 +34,11 @@ execution, and execution is read-only.
       generates SQL -> AST validation -> read-only execution ->
       grounded answer). Folds in Phase 4 (AST validation) and
       Phase 5 (LLM integration).
-- [ ] Milestone 2 — Evaluation harness
+- [x] **Milestone 2 — Evaluation harness** (12-question held-out set
+      for `concert_singer`, scored by Spider-style execution
+      accuracy — comparing returned rows, not SQL text). Pulls
+      Phase 18 (Evaluation) forward as the regression gate for every
+      milestone after it.
 - [ ] Milestone 3 — Self-correction loop
 - [ ] Milestone 4 — Lightweight schema linking
 - [ ] Milestone 5 — Conversation memory
@@ -67,6 +71,9 @@ python main.py
 # Milestone 1 demo: ask a real question end to end
 python main.py "Which singers are from France?"
 python main.py "How many concerts were held at each stadium?"
+
+# Milestone 2: run the evaluation harness against the held-out set
+python scripts/run_eval.py
 ```
 
 Schema inspection prints OpenTelemetry trace spans to the console for
@@ -109,7 +116,7 @@ ai-database-agent/
 │   ├── llm/                       # LLM client, SQL + answer generation (Milestone 1+)
 │   ├── agent/                     # Pipeline / orchestration (Milestone 1+)
 │   ├── memory/                    # Conversation memory (Phase 10+)
-│   ├── evaluation/                 # Evaluation + ablation experiments (Phase 18+)
+│   ├── evaluation/                 # Eval dataset + harness (Milestone 2+, pulls Phase 18 forward)
 │   └── api/                         # FastAPI backend (Phase 23+)
 ├── tests/
 ├── scripts/

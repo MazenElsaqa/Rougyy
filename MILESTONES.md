@@ -51,7 +51,7 @@ built in isolation.
   database (and a separate minimal `_smoke_test.sqlite` for unit tests)
 - `main.py "your question"` — CLI demo of the full pipeline
 
-### Milestone 2 — Evaluation harness (build immediately after M1)
+### Milestone 2 — Evaluation harness (build immediately after M1) ✅
 
 Execution-accuracy measurement against a small held-out set of
 question/SQL pairs for `concert_singer`. This becomes the regression
@@ -60,7 +60,27 @@ original plan by number, but it corresponds to pulling Phase 18
 (Evaluation) forward, right after the first working pipeline exists
 instead of after 12+ more phases.
 
-**Tracks:** execution match %, valid-SQL %, average retries, latency.
+**Tracks:** execution match %, valid-SQL %, execution-success %, latency.
+(Average retries will be added once Milestone 3 introduces retries.)
+
+**Delivered:**
+- `evaluation/dataset.py` — `EvalCase` model + `get_default_dataset()`,
+  a 12-question held-out set for `concert_singer` covering filters,
+  aggregation, `ORDER BY`/`LIMIT`, joins, `GROUP BY`, and `DISTINCT`
+- `evaluation/harness.py` — `EvaluationHarness.run(dataset)` drives
+  each question through the real `AgentPipeline`, executes the case's
+  gold SQL separately, and scores them with `rows_match()`: an
+  order- and alias-independent comparison of the two result sets
+  (Spider-style execution accuracy — it's about the data returned,
+  not SQL text equality)
+- `EvalReport` — per-case results plus aggregate `valid_sql_rate`,
+  `execution_success_rate`, `execution_accuracy`, and `avg_latency_ms`
+- `scripts/run_eval.py` — CLI that runs the default dataset against
+  the real pipeline and prints a per-case pass/fail breakdown plus
+  the aggregate summary
+- Tests stub the SQL generator with a question -> SQL map so the
+  scoring logic itself (match / mismatch / invalid / missing SQL /
+  aggregate averaging) is verified without needing a live LLM call
 
 ### Milestone 3 — Self-correction loop
 
