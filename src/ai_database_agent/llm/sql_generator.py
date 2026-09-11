@@ -32,7 +32,7 @@ import re
 from pydantic import BaseModel
 
 from ai_database_agent.config import get_settings
-from ai_database_agent.llm.client import get_llm_client
+from ai_database_agent.llm.client import get_llm_client, llm_model_name
 from ai_database_agent.llm.exemplars import SQLExemplar
 from ai_database_agent.llm.prompts import CORRECTION_USER_TEMPLATE, SQL_GENERATION_SYSTEM_PROMPT
 from ai_database_agent.memory.conversation import ConversationTurn
@@ -56,7 +56,7 @@ class SQLGenerator:
 
     def __init__(self, client=None, model: str | None = None):
         self._client = client or get_llm_client()
-        self._model = model or get_settings().llm_model
+        self._model = model or llm_model_name()
 
     def generate(
         self,

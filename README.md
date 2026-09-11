@@ -68,8 +68,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 cp .env.example .env
-# edit .env: set OPENAI_API_KEY (and OPENAI_BASE_URL/LLM_MODEL if not
-# using OpenAI directly — e.g. Gemini's OpenAI-compatible endpoint)
+# edit .env for local Ollama (recommended for local testing):
+# LLM_PROVIDER=ollama, OLLAMA_MODEL=llama3.2
+# Or configure OPENAI_API_KEY/OPENAI_BASE_URL/LLM_MODEL for a hosted provider.
 
 # builds data/concert_singer.sqlite and data/_smoke_test.sqlite locally
 # (both are gitignored — regenerate any time)
@@ -132,9 +133,19 @@ See `.env.example`. Key ones so far:
 | `QUERY_TIMEOUT_MS` | Hard timeout for query execution (Phase 3) |
 | `OTEL_SERVICE_NAME` | Service name attached to trace spans |
 | `OTEL_TRACES_EXPORTER` | `console` (default) or `otlp` |
-| `OPENAI_API_KEY` | API key for the configured OpenAI-compatible provider (Milestone 1) |
-| `OPENAI_BASE_URL` | Override to point at a non-OpenAI provider (e.g. Gemini's OpenAI-compatible endpoint, or a local Ollama server) |
-| `LLM_MODEL` | Model name passed to the provider (Milestone 1) |
+| `LLM_PROVIDER` | Provider selection: `ollama` or `openai` |
+| `OLLAMA_BASE_URL` | Local Ollama host, normally `http://localhost:11434` |
+| `OLLAMA_MODEL` | Installed Ollama model, for example `llama3.2` |
+| `OPENAI_API_KEY` | API key for a hosted OpenAI-compatible provider |
+| `OPENAI_BASE_URL` | Optional hosted provider endpoint |
+| `LLM_MODEL` | Hosted provider model name |
+
+### Local Ollama on macOS
+
+1. Install Ollama from [ollama.com/download](https://ollama.com/download).
+2. Start it with `ollama serve` if the app is not already running.
+3. Download the model configured in `.env`, for example `ollama pull llama3.2`.
+4. Run the backend and frontend using the commands above. Check `http://localhost:8000/llm/health` before asking a question.
 
 ## Testing
 

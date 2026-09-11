@@ -20,12 +20,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/concert_singer.sqlite"
 
     # --- LLM: OpenAI-compatible SDK (Phase 5+) ---
-    # Works with any provider that supports the OpenAI API interface:
-    #   OpenAI:  base_url=None (default), api_key=sk-...
-    #   Gemini:  base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=AIza...
-    #   Ollama:  base_url="http://localhost:11434/v1", api_key="ollama"
+    # Set LLM_PROVIDER=ollama for a local Ollama server. The legacy
+    # OPENAI_* variables remain supported for hosted OpenAI-compatible APIs.
+    llm_provider: str = "openai"
     openai_api_key: str = ""
-    openai_base_url: str | None = None   # None = use OpenAI default
+    openai_base_url: str | None = None
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
     llm_model: str = "gpt-4o"
 
     # --- Query execution (Phase 3 timeout) ---

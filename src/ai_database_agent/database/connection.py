@@ -8,6 +8,8 @@ tuning, no multi-DB abstraction yet (that's Phase 42+, DatabaseExecutor).
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
+from urllib.parse import urlparse
 
 from sqlalchemy import Engine, create_engine
 
@@ -23,5 +25,9 @@ def get_engine() -> Engine:
     with _tracer.start_as_current_span("db.create_engine") as span:
         settings = get_settings()
         span.set_attribute("db.url_scheme", settings.database_url.split(":")[0])
+        parsed_url = urlparse(settings.database_url)
+        if parsed_url.scheme == "sqlite" and parsed_url.path not in ("", ":memory:"):
+            sqlite_path = parsed_url.path[1:] if parsed_url.path.startswith("/./") else parsed_url.path
+            Path(sqlite_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         engine = create_engine(settings.database_url, future=True)
         return engine
