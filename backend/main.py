@@ -34,19 +34,28 @@ _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import tempfile
+
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from ai_database_agent.agent.pipeline import AgentPipeline
-from ai_database_agent.database.connection import get_engine
 from ai_database_agent.database.inspector import DatabaseInspector
+from ai_database_agent.database.registry import (
+    DEFAULT_DB_ID,
+    DatabaseRegistry,
+    InvalidDatabaseFileError,
+)
 from ai_database_agent.llm.client import check_ollama_connection, llm_connection_info
 from ai_database_agent.memory.conversation import Conversation
+from ai_database_agent.observability.logging import get_logger, setup_logging
 from ai_database_agent.observability.tracing import get_tracer, setup_tracing
 
+setup_logging(log_dir=_ROOT / "logs")
 setup_tracing()
 _tracer = get_tracer(__name__)
+_log = get_logger(__name__)
 
 app = fastapi.FastAPI(title="Rougyy Agent API")
 
@@ -58,9 +67,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_pipeline = AgentPipeline()
+
+@app.middleware("http")
+async def log_requests(request: fastapi.Request, call_next):
+    """Log every request/response with timing, and any unhandled exception
+    with a full traceback, so a failure in the field can be traced back to
+    the exact request and stack frame from logs/errors.log alone."""
+    import time
+
+    start = time.perf_counter()
+    _log.info(
+        "http.request.start",
+        extra={"method": request.method, "path": request.url.path},
+    )
+    try:
+        response = await call_next(request)
+    except Exception:
+        _log.exception(
+            "http.request.unhandled_exception",
+            extra={"method": request.method, "path": request.url.path},
+        )
+        raise
+    duration_ms = (time.perf_counter() - start) * 1000
+    _log.info(
+        "http.request.end",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round(duration_ms, 2),
+        },
+    )
+    return response
+
+_registry = DatabaseRegistry(upload_dir=_ROOT / "data" / "uploads")
 _conversations: dict[str, Conversation] = {}
 _conversations_lock = Lock()
+
+_pipelines: dict[str, AgentPipeline] = {}
+_pipelines_lock = Lock()
 
 
 def _get_conversation(session_id: str) -> Conversation:
@@ -72,16 +117,60 @@ def _get_conversation(session_id: str) -> Conversation:
         return conversation
 
 
+def _get_pipeline(db_id: str) -> AgentPipeline:
+    """One AgentPipeline per database (Milestone 7/8): each pipeline
+    caches its own schema, schema-linker, and executor tied to a
+    specific Engine, so switching databases must not reuse another
+    database's pipeline.
+    """
+    with _pipelines_lock:
+        pipeline = _pipelines.get(db_id)
+        if pipeline is None:
+            engine = _registry.get_engine(db_id)
+            pipeline = AgentPipeline(engine=engine)
+            _pipelines[db_id] = pipeline
+        return pipeline
+
+
+def _resolve_db_ids(requested: list[str] | None) -> list[str]:
+    """None or empty -> every registered database ("search all at once").
+    Otherwise, the caller's explicit selection, validated against the
+    registry so a stale/unknown db_id fails clearly instead of silently.
+    """
+    if not requested:
+        return [entry.id for entry in _registry.list_databases()]
+    for db_id in requested:
+        try:
+            _registry.get(db_id)
+        except KeyError:
+            raise fastapi.HTTPException(status_code=404, detail=f"Unknown database id: {db_id}") from None
+    return requested
+
+
 # --- Request/response models ---------------------------------------------
 
 
 class AskRequest(BaseModel):
     question: str
     session_id: str | None = None
+    # Milestone 8: which database(s) to run this question against.
+    # None/empty = search every registered database at once.
+    database_ids: list[str] | None = None
 
 
 class SessionRequest(BaseModel):
     session_id: str
+
+
+class DatabaseOut(BaseModel):
+    id: str
+    name: str
+    dialect: str
+    is_default: bool
+
+
+class DatabaseListResponse(BaseModel):
+    databases: list[DatabaseOut]
 
 
 class QueryResultOut(BaseModel):
@@ -90,6 +179,17 @@ class QueryResultOut(BaseModel):
     row_count: int
     truncated: bool
     execution_ms: float
+
+
+class PerDatabaseAskResult(BaseModel):
+    database_id: str
+    database_name: str
+    sql: str | None = None
+    answer: str | None = None
+    error: str | None = None
+    attempts: int
+    linked_tables: list[str]
+    query_result: QueryResultOut | None = None
 
 
 class AskResponse(BaseModel):
@@ -101,6 +201,9 @@ class AskResponse(BaseModel):
     attempts: int
     linked_tables: list[str]
     query_result: QueryResultOut | None = None
+    # Milestone 8: one entry per database this question was run against.
+    # Length 1 for the common single-database case.
+    per_database: list[PerDatabaseAskResult] = []
 
     @property
     def success(self) -> bool:
@@ -117,6 +220,43 @@ class TableOut(BaseModel):
 class SchemaResponse(BaseModel):
     dialect: str
     tables: list[TableOut]
+
+
+class ColumnDetailOut(BaseModel):
+    name: str
+    type: str
+    nullable: bool
+    is_primary_key: bool
+    default: str | None = None
+
+
+class ForeignKeyOut(BaseModel):
+    column: str
+    references_table: str
+    references_column: str
+
+
+class IndexOut(BaseModel):
+    name: str
+    columns: list[str]
+    unique: bool
+
+
+class TableDetailResponse(BaseModel):
+    """Full "ORM-style" view of a single table: every column with its
+    type/nullability/PK flag, its foreign keys as relationships, its
+    indexes, and a few sample rows -- everything `DatabaseInspector`
+    already collects but the plain `/schema` endpoint above discards.
+    """
+
+    name: str
+    dialect: str
+    columns: list[ColumnDetailOut]
+    primary_keys: list[str]
+    foreign_keys: list[ForeignKeyOut]
+    indexes: list[IndexOut]
+    row_count: int
+    sample_rows: list[dict]
 
 
 # --- Routes -----------------------------------------------------------------
@@ -137,11 +277,66 @@ async def llm_health() -> dict[str, object]:
     }
 
 
+@app.get("/databases", response_model=DatabaseListResponse)
+async def list_databases() -> DatabaseListResponse:
+    """Every database currently registered (Milestone 7/8): the
+    original configured one plus any the user has uploaded.
+    """
+    return DatabaseListResponse(
+        databases=[
+            DatabaseOut(id=entry.id, name=entry.name, dialect=entry.dialect, is_default=entry.is_default)
+            for entry in _registry.list_databases()
+        ]
+    )
+
+
+@app.post("/databases/upload", response_model=DatabaseOut)
+async def upload_database(file: fastapi.UploadFile = fastapi.File(...)) -> DatabaseOut:
+    """Milestone 7: let a user add their own SQLite database file.
+
+    The file is streamed to a temp path, handed to the registry for
+    validation (must actually open as SQLite) and permanent storage
+    under data/uploads/, then registered so /schema, /schema/tables,
+    and /ask can all target it by db_id immediately.
+    """
+    if not file.filename:
+        raise fastapi.HTTPException(status_code=400, detail="No file provided")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in (".sqlite", ".sqlite3", ".db"):
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{suffix}'. Upload a .sqlite, .sqlite3, or .db file.",
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        contents = await file.read()
+        tmp.write(contents)
+        tmp_path = Path(tmp.name)
+
+    try:
+        display_name = Path(file.filename).stem
+        entry = _registry.add_sqlite_upload(tmp_path, display_name)
+    except InvalidDatabaseFileError as exc:
+        _log.warning("databases.upload.rejected", extra={"filename": file.filename, "error": str(exc)})
+        raise fastapi.HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    _log.info("databases.upload.success", extra={"db_id": entry.id, "filename": file.filename})
+    return DatabaseOut(id=entry.id, name=entry.name, dialect=entry.dialect, is_default=entry.is_default)
+
+
 @app.get("/schema", response_model=SchemaResponse)
-async def schema() -> SchemaResponse:
+async def schema(db_id: str = DEFAULT_DB_ID) -> SchemaResponse:
     """Full database schema, for the sidebar in the chat UI."""
-    with _tracer.start_as_current_span("api.schema"):
-        db_schema = DatabaseInspector(get_engine()).inspect_database()
+    with _tracer.start_as_current_span("api.schema") as span:
+        span.set_attribute("api.db_id", db_id)
+        try:
+            engine = _registry.get_engine(db_id)
+        except KeyError:
+            raise fastapi.HTTPException(status_code=404, detail=f"Unknown database id: {db_id}") from None
+        db_schema = DatabaseInspector(engine).inspect_database()
         return SchemaResponse(
             dialect=db_schema.dialect,
             tables=[
@@ -156,6 +351,56 @@ async def schema() -> SchemaResponse:
         )
 
 
+@app.get("/schema/tables/{table_name}", response_model=TableDetailResponse)
+async def table_detail(table_name: str, db_id: str = DEFAULT_DB_ID) -> TableDetailResponse:
+    """Full detail for one table: columns with types/PK flags, foreign
+    keys, indexes, and sample rows -- for the "click a table to see its
+    schema architecture" view in the sidebar.
+    """
+    with _tracer.start_as_current_span("api.schema.table_detail") as span:
+        span.set_attribute("api.table_name", table_name)
+        span.set_attribute("api.db_id", db_id)
+        try:
+            engine = _registry.get_engine(db_id)
+        except KeyError:
+            raise fastapi.HTTPException(status_code=404, detail=f"Unknown database id: {db_id}") from None
+        db_schema = DatabaseInspector(engine).inspect_database()
+        table = db_schema.get_table(table_name)
+        if table is None:
+            _log.warning("schema.table_detail.not_found", extra={"table_name": table_name})
+            raise fastapi.HTTPException(status_code=404, detail=f"Table '{table_name}' not found")
+
+        return TableDetailResponse(
+            name=table.name,
+            dialect=db_schema.dialect,
+            columns=[
+                ColumnDetailOut(
+                    name=c.name,
+                    type=c.type,
+                    nullable=c.nullable,
+                    is_primary_key=c.is_primary_key,
+                    default=c.default,
+                )
+                for c in table.columns
+            ],
+            primary_keys=table.primary_keys,
+            foreign_keys=[
+                ForeignKeyOut(
+                    column=fk.column,
+                    references_table=fk.references_table,
+                    references_column=fk.references_column,
+                )
+                for fk in table.foreign_keys
+            ],
+            indexes=[
+                IndexOut(name=idx.name, columns=idx.columns, unique=idx.unique)
+                for idx in table.indexes
+            ],
+            row_count=table.row_count,
+            sample_rows=table.sample_rows,
+        )
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask(payload: AskRequest) -> AskResponse:
     """Run one question through the full agent pipeline.
@@ -163,6 +408,15 @@ async def ask(payload: AskRequest) -> AskResponse:
     Reuses the caller's `session_id` if provided (so follow-up
     questions resolve against Milestone 5 conversation memory), or
     mints a new one on first contact.
+
+    Milestone 8: `database_ids` selects which registered database(s)
+    to run against. A single id targets just that database (the
+    common case, and the only case before this milestone). Multiple
+    ids, or omitting the field entirely, fans the same question out to
+    every one of them concurrently and returns one result per
+    database in `per_database`, alongside a top-level result taken
+    from the first database that answered successfully (so existing
+    single-database callers keep working unchanged).
     """
     with _tracer.start_as_current_span("api.ask") as span:
         question = payload.question.strip()
@@ -172,28 +426,107 @@ async def ask(payload: AskRequest) -> AskResponse:
         session_id = payload.session_id or str(uuid.uuid4())
         span.set_attribute("api.session_id", session_id)
 
-        conversation = _get_conversation(session_id)
-        result = _pipeline.ask(question, conversation=conversation)
+        db_ids = _resolve_db_ids(payload.database_ids)
+        span.set_attribute("api.db_ids", ",".join(db_ids))
 
-        query_result_out = None
-        if result.query_result is not None and result.query_result.success:
-            query_result_out = QueryResultOut(
-                columns=result.query_result.columns,
-                rows=result.query_result.rows,
-                row_count=result.query_result.row_count,
-                truncated=result.query_result.truncated,
-                execution_ms=result.query_result.execution_ms,
+        conversation = _get_conversation(session_id)
+        _log.info(
+            "ask.start",
+            extra={
+                "session_id": session_id,
+                "question": question,
+                "db_ids": ",".join(db_ids),
+                "conversation_turns": len(conversation.recent()),
+            },
+        )
+
+        per_database: list[PerDatabaseAskResult] = []
+        for db_id in db_ids:
+            entry = _registry.get(db_id)
+            pipeline = _get_pipeline(db_id)
+            try:
+                result = pipeline.ask(question, conversation=conversation if len(db_ids) == 1 else None)
+            except Exception:
+                _log.exception(
+                    "ask.pipeline_exception",
+                    extra={"session_id": session_id, "question": question, "db_id": db_id},
+                )
+                per_database.append(
+                    PerDatabaseAskResult(
+                        database_id=db_id,
+                        database_name=entry.name,
+                        error="Internal error while answering this question.",
+                        attempts=0,
+                        linked_tables=[],
+                    )
+                )
+                continue
+
+            if result.success:
+                _log.info(
+                    "ask.success",
+                    extra={
+                        "session_id": session_id,
+                        "db_id": db_id,
+                        "question": question,
+                        "sql": result.sql,
+                        "attempts": result.attempts,
+                        "linked_tables": ",".join(result.linked_tables),
+                        "row_count": result.query_result.row_count if result.query_result else None,
+                    },
+                )
+            else:
+                _log.error(
+                    "ask.failed",
+                    extra={
+                        "session_id": session_id,
+                        "db_id": db_id,
+                        "question": question,
+                        "sql": result.sql,
+                        "attempts": result.attempts,
+                        "linked_tables": ",".join(result.linked_tables),
+                        "error": result.error,
+                    },
+                )
+
+            query_result_out = None
+            if result.query_result is not None and result.query_result.success:
+                query_result_out = QueryResultOut(
+                    columns=result.query_result.columns,
+                    rows=result.query_result.rows,
+                    row_count=result.query_result.row_count,
+                    truncated=result.query_result.truncated,
+                    execution_ms=result.query_result.execution_ms,
+                )
+
+            per_database.append(
+                PerDatabaseAskResult(
+                    database_id=db_id,
+                    database_name=entry.name,
+                    sql=result.sql,
+                    answer=result.answer,
+                    error=result.error,
+                    attempts=result.attempts,
+                    linked_tables=result.linked_tables,
+                    query_result=query_result_out,
+                )
             )
+
+        # Prefer the first successful database's result as the primary
+        # one (so a single-database request behaves exactly as before);
+        # fall back to the first result at all if every database failed.
+        primary = next((r for r in per_database if r.error is None), per_database[0])
 
         return AskResponse(
             session_id=session_id,
-            question=result.question,
-            sql=result.sql,
-            answer=result.answer,
-            error=result.error,
-            attempts=result.attempts,
-            linked_tables=result.linked_tables,
-            query_result=query_result_out,
+            question=question,
+            sql=primary.sql,
+            answer=primary.answer,
+            error=primary.error if len(per_database) == 1 else None,
+            attempts=primary.attempts,
+            linked_tables=primary.linked_tables,
+            query_result=primary.query_result,
+            per_database=per_database,
         )
 
 

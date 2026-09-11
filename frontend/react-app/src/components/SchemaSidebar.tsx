@@ -1,4 +1,6 @@
+import { useState } from "react"
 import type { TableSchema } from "../lib/api"
+import { TableDetailModal } from "./TableDetailModal"
 
 interface SchemaSidebarProps {
   dialect: string | null
@@ -10,6 +12,8 @@ interface SchemaSidebarProps {
 }
 
 export function SchemaSidebar({ dialect, tables, linkedTables, loading, error, onRetry }: SchemaSidebarProps) {
+  const [selectedTable, setSelectedTable] = useState<string | null>(null)
+
   return (
     <aside className="flex h-full w-full flex-col border-border bg-surface md:w-64 md:border-r" aria-label="Database schema">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -44,11 +48,14 @@ export function SchemaSidebar({ dialect, tables, linkedTables, loading, error, o
           tables.map((table) => {
             const isLinked = linkedTables.includes(table.name)
             return (
-              <div
+              <button
                 key={table.name}
-                className={`mb-1 rounded-md px-2 py-2 transition-colors ${
+                type="button"
+                onClick={() => setSelectedTable(table.name)}
+                className={`mb-1 w-full rounded-md px-2 py-2 text-left transition-colors ${
                   isLinked ? "bg-primary-muted" : "hover:bg-surface-muted"
                 }`}
+                aria-haspopup="dialog"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-mono text-[13px] font-medium text-foreground">
@@ -57,16 +64,21 @@ export function SchemaSidebar({ dialect, tables, linkedTables, loading, error, o
                   <span className="shrink-0 text-[11px] text-muted-foreground">{table.row_count} rows</span>
                 </div>
                 <p className="mt-0.5 truncate text-[11px] text-muted">{table.columns.join(", ")}</p>
-              </div>
+              </button>
             )
           })}
       </div>
 
       <div className="border-t border-border px-4 py-3">
         <p className="text-[11px] leading-relaxed text-muted">
-          Highlighted tables were selected by schema linking for the most recent question.
+          Click a table to see its full schema (columns, keys, relationships, sample rows). Highlighted
+          tables were selected by schema linking for the most recent question.
         </p>
       </div>
+
+      {selectedTable && (
+        <TableDetailModal tableName={selectedTable} onClose={() => setSelectedTable(null)} />
+      )}
     </aside>
   )
 }

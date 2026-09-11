@@ -22,12 +22,54 @@ export interface SchemaResponse {
   tables: TableSchema[]
 }
 
+export interface ColumnDetail {
+  name: string
+  type: string
+  nullable: boolean
+  is_primary_key: boolean
+  default: string | null
+}
+
+export interface ForeignKeyDetail {
+  column: string
+  references_table: string
+  references_column: string
+}
+
+export interface IndexDetail {
+  name: string
+  columns: string[]
+  unique: boolean
+}
+
+export interface TableDetail {
+  name: string
+  dialect: string
+  columns: ColumnDetail[]
+  primary_keys: string[]
+  foreign_keys: ForeignKeyDetail[]
+  indexes: IndexDetail[]
+  row_count: number
+  sample_rows: Record<string, unknown>[]
+}
+
 export interface QueryResult {
   columns: string[]
   rows: Record<string, unknown>[]
   row_count: number
   truncated: boolean
   execution_ms: number
+}
+
+export interface PerDatabaseAskResult {
+  database_id: string
+  database_name: string
+  sql: string | null
+  answer: string | null
+  error: string | null
+  attempts: number
+  linked_tables: string[]
+  query_result: QueryResult | null
 }
 
 export interface AskResponse {
@@ -39,7 +81,22 @@ export interface AskResponse {
   attempts: number
   linked_tables: string[]
   query_result: QueryResult | null
+  per_database: PerDatabaseAskResult[]
 }
+
+export interface DatabaseInfo {
+  id: string
+  name: string
+  dialect: string
+  is_default: boolean
+}
+
+export interface DatabaseListResponse {
+  databases: DatabaseInfo[]
+}
+
+/** Milestone 8: null/undefined means "all databases at once". */
+export type DatabaseSelection = string[] | null
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number): Promise<Response> {
   const controller = new AbortController()
@@ -65,22 +122,56 @@ async function parseOrThrow<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export async function fetchSchema(): Promise<SchemaResponse> {
-  const response = await fetchWithTimeout(`${API_BASE}/schema`, {}, SCHEMA_TIMEOUT_MS)
+export async function fetchSchema(databaseId?: string): Promise<SchemaResponse> {
+  const query = databaseId ? `?db_id=${encodeURIComponent(databaseId)}` : ""
+  const response = await fetchWithTimeout(`${API_BASE}/schema${query}`, {}, SCHEMA_TIMEOUT_MS)
   return parseOrThrow<SchemaResponse>(response)
 }
 
-export async function askQuestion(question: string, sessionId: string): Promise<AskResponse> {
+export async function askQuestion(
+  question: string,
+  sessionId: string,
+  databaseIds?: DatabaseSelection,
+): Promise<AskResponse> {
   const response = await fetchWithTimeout(
     `${API_BASE}/ask`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, session_id: sessionId }),
+      body: JSON.stringify({ question, session_id: sessionId, database_ids: databaseIds ?? null }),
     },
     ASK_TIMEOUT_MS,
   )
   return parseOrThrow<AskResponse>(response)
+}
+
+export async function fetchTableDetail(tableName: string, databaseId?: string): Promise<TableDetail> {
+  const query = databaseId ? `?db_id=${encodeURIComponent(databaseId)}` : ""
+  const response = await fetchWithTimeout(
+    `${API_BASE}/schema/tables/${encodeURIComponent(tableName)}${query}`,
+    {},
+    SCHEMA_TIMEOUT_MS,
+  )
+  return parseOrThrow<TableDetail>(response)
+}
+
+export async function fetchDatabases(): Promise<DatabaseListResponse> {
+  const response = await fetchWithTimeout(`${API_BASE}/databases`, {}, SCHEMA_TIMEOUT_MS)
+  return parseOrThrow<DatabaseListResponse>(response)
+}
+
+/** Milestone 7: upload a user's own SQLite file (.sqlite/.sqlite3/.db)
+ * and register it so it shows up in the database selector immediately.
+ */
+export async function uploadDatabase(file: File): Promise<DatabaseInfo> {
+  const formData = new FormData()
+  formData.append("file", file)
+  const response = await fetchWithTimeout(
+    `${API_BASE}/databases/upload`,
+    { method: "POST", body: formData },
+    SCHEMA_TIMEOUT_MS,
+  )
+  return parseOrThrow<DatabaseInfo>(response)
 }
 
 export async function resetSession(sessionId: string): Promise<void> {
