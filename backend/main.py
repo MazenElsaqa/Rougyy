@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from ai_database_agent.agent.pipeline import AgentPipeline
 from ai_database_agent.database.connection import get_engine
 from ai_database_agent.database.inspector import DatabaseInspector
+from ai_database_agent.llm.client import check_ollama_connection, llm_connection_info
 from ai_database_agent.memory.conversation import Conversation
 from ai_database_agent.observability.tracing import get_tracer, setup_tracing
 
@@ -124,6 +125,16 @@ class SchemaResponse(BaseModel):
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/llm/health")
+async def llm_health() -> dict[str, object]:
+    connected, message = check_ollama_connection()
+    return {
+        "status": "ok" if connected else "error",
+        "message": message,
+        **llm_connection_info(),
+    }
 
 
 @app.get("/schema", response_model=SchemaResponse)
