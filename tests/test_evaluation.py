@@ -5,6 +5,7 @@ from ai_database_agent.database.executor import QueryExecutor
 from ai_database_agent.database.validator import SQLValidator
 from ai_database_agent.evaluation.dataset import EvalCase
 from ai_database_agent.evaluation.harness import EvaluationHarness, rows_match
+from ai_database_agent.llm.intent import DATA_QUERY
 
 
 class _MapSQLGenerator:
@@ -22,6 +23,11 @@ class _StubAnswerGenerator:
         return f"Found {query_result.row_count} row(s)."
 
 
+class _StubClassifier:
+    def classify(self, question, table_names=None, conversation_turns=None):
+        return DATA_QUERY
+
+
 def _harness(mapping: dict[str, str]) -> EvaluationHarness:
     engine = create_engine("sqlite:///./data/concert_singer.sqlite", future=True)
     pipeline = AgentPipeline(
@@ -29,6 +35,7 @@ def _harness(mapping: dict[str, str]) -> EvaluationHarness:
         sql_generator=_MapSQLGenerator(mapping),
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
     )
     gold_executor = QueryExecutor(engine)
     return EvaluationHarness(pipeline, gold_executor)

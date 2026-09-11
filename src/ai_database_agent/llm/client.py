@@ -61,13 +61,26 @@ def llm_connection_info() -> dict[str, str]:
     }
 
 
+# Per-request ceiling for LLM calls. Local models can take minutes,
+# but a hung connection must surface as an error, never hang forever.
+LLM_REQUEST_TIMEOUT_S = 300.0
+
+
 @lru_cache
 def get_llm_client() -> OpenAI:
     """Return a cached OpenAI-compatible client for the selected provider."""
     settings = get_settings()
     if settings.llm_provider.lower() == "ollama":
-        return OpenAI(api_key="ollama", base_url=_ollama_openai_url(settings.ollama_base_url))
-    return OpenAI(api_key=settings.openai_api_key or "unset", base_url=settings.openai_base_url)
+        return OpenAI(
+            api_key="ollama",
+            base_url=_ollama_openai_url(settings.ollama_base_url),
+            timeout=LLM_REQUEST_TIMEOUT_S,
+        )
+    return OpenAI(
+        api_key=settings.openai_api_key or "unset",
+        base_url=settings.openai_base_url,
+        timeout=LLM_REQUEST_TIMEOUT_S,
+    )
 
 
 def check_ollama_connection() -> tuple[bool, str]:

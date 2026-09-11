@@ -17,10 +17,11 @@ Design notes:
     registered -- rejecting anything that isn't a real SQLite database
     (wrong file type, corrupted upload, zero-byte file, etc.) with a
     clear error instead of a confusing failure three requests later.
-  - This is process-local (an in-memory dict), matching the existing
-    session/conversation storage pattern in backend/main.py. Restarting
-    the backend forgets uploaded databases; the file on disk is not
-    deleted, so re-uploading is cheap.
+- This registry is process-local (an in-memory dict). Milestone 12
+  adds disk persistence behind it: every upload is also recorded in
+  the StateStore (`storage/state_store.py`), and `reload_from_disk()`
+  (called on backend startup) re-registers whatever is still on disk,
+  so a restart no longer forgets uploaded databases.
 """
 from __future__ import annotations
 
@@ -29,12 +30,19 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ai_database_agent.database.connection import get_engine as get_default_engine
+from ai_database_agent.database.connection import (
+    create_sqlite_engine,
+    get_engine as get_default_engine,
+)
 from ai_database_agent.observability.logging import get_logger
+
+if TYPE_CHECKING:
+    from ai_database_agent.storage.state_store import StateStore
 
 _log = get_logger(__name__)
 
@@ -60,6 +68,7 @@ class DatabaseRegistry:
     """Process-wide registry of every database the app can currently query."""
 
     upload_dir: Path = field(default_factory=lambda: Path("data/uploads"))
+    state_store: StateStore | None = None
     _entries: dict[str, DatabaseEntry] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock)
 
@@ -103,7 +112,7 @@ class DatabaseRegistry:
             _log.exception("registry.upload.copy_failed", extra={"display_name": display_name})
             raise InvalidDatabaseFileError(f"Could not save uploaded file: {exc}") from exc
 
-        engine = create_engine(f"sqlite:///{dest_path.resolve()}", future=True)
+        engine = create_sqlite_engine(dest_path)
         try:
             with engine.connect() as conn:
                 # A real SQLite file has at least this system table;
@@ -128,6 +137,14 @@ class DatabaseRegistry:
             dialect=engine.dialect.name,
             file_path=str(dest_path),
         )
+        if self.state_store is not None:
+            try:
+                self.state_store.save_database(entry)
+            except Exception:
+                engine.dispose()
+                dest_path.unlink(missing_ok=True)
+                _log.exception("registry.upload.state_save_failed", extra={"db_id": db_id})
+                raise
         with self._lock:
             self._entries[db_id] = entry
         _log.info(
@@ -135,6 +152,43 @@ class DatabaseRegistry:
             extra={"db_id": db_id, "display_name": display_name, "file_path": str(dest_path)},
         )
         return entry
+
+    def reload_from_disk(self) -> int:
+        """Re-register uploads recorded in the StateStore whose files
+        still exist (Milestone 12). Called once on backend startup so
+        previously uploaded databases reappear without re-uploading.
+        Stale rows (file gone) are pruned. Returns the reloaded count.
+        """
+        if self.state_store is None:
+            return 0
+        reloaded = 0
+        for info in self.state_store.list_databases():
+            if info.db_id in self._entries:
+                continue
+            file_path = Path(info.file_path)
+            if not file_path.is_file():
+                _log.warning("registry.reload.missing_file", extra={"db_id": info.db_id})
+                self.state_store.delete_database(info.db_id)
+                continue
+            try:
+                engine = create_sqlite_engine(file_path)
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT name FROM sqlite_master LIMIT 1"))
+            except SQLAlchemyError:
+                _log.warning("registry.reload.unreadable", extra={"db_id": info.db_id})
+                continue
+            with self._lock:
+                self._entries[info.db_id] = DatabaseEntry(
+                    id=info.db_id,
+                    name=info.display_name,
+                    engine=engine,
+                    dialect=engine.dialect.name,
+                    file_path=str(file_path),
+                )
+            reloaded += 1
+        if reloaded:
+            _log.info("registry.reload.done", extra={"reloaded": reloaded})
+        return reloaded
 
     def remove(self, db_id: str) -> None:
         if db_id == DEFAULT_DB_ID:
@@ -146,4 +200,6 @@ class DatabaseRegistry:
         entry.engine.dispose()
         if entry.file_path:
             Path(entry.file_path).unlink(missing_ok=True)
+        if self.state_store is not None:
+            self.state_store.delete_database(db_id)
         _log.info("registry.remove", extra={"db_id": db_id})

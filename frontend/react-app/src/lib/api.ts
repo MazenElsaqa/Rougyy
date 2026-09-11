@@ -5,9 +5,11 @@
 const API_BASE = "/api"
 
 // Local Ollama answers take ~60-90s (two LLM calls per question), so the
-// ask timeout is generous. Schema never touches the LLM and should be instant;
-// if it times out the backend is almost certainly not running.
-const SCHEMA_TIMEOUT_MS = 15_000
+// ask timeout is generous. Schema never touches the LLM and is normally
+// instant; its 60s timeout is only a safety net (e.g. first load while
+// the backend is cold-starting) -- a timeout here still means the backend
+// is most likely not running.
+const SCHEMA_TIMEOUT_MS = 60_000
 const ASK_TIMEOUT_MS = 300_000
 
 export interface TableSchema {

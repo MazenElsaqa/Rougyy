@@ -12,11 +12,29 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.pool import NullPool
 
 from ai_database_agent.config import get_settings
 from ai_database_agent.observability.tracing import get_tracer
 
 _tracer = get_tracer(__name__)
+
+
+def create_sqlite_engine(path: Path | str) -> Engine:
+    """Build a thread-safe SQLite engine for `path`.
+
+    `def` API routes run in a worker threadpool, so engines must be
+    safe to use from any thread: NullPool hands each checkout a fresh
+    connection (no cross-thread reuse, no pool exhaustion during long
+    LLM calls), and check_same_thread=False drops the driver's
+    same-thread guard.
+    """
+    return create_engine(
+        f"sqlite:///{Path(path).resolve()}",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
 
 
 @lru_cache
@@ -29,5 +47,5 @@ def get_engine() -> Engine:
         if parsed_url.scheme == "sqlite" and parsed_url.path not in ("", ":memory:"):
             sqlite_path = parsed_url.path[1:] if parsed_url.path.startswith("/./") else parsed_url.path
             Path(sqlite_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        engine = create_engine(settings.database_url, future=True)
-        return engine
+            return create_sqlite_engine(Path(sqlite_path).expanduser())
+        return create_engine(settings.database_url, future=True)

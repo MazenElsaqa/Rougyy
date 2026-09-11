@@ -79,9 +79,15 @@ def ask_demo(question: str) -> None:
 
         log.info(
             "cli.ask_demo.success",
-            extra={"question": question, "sql": result.sql, "row_count": result.query_result.row_count},
+            extra={
+                "question": question,
+                "sql": result.sql,
+                "intent": result.intent,
+                "row_count": result.query_result.row_count if result.query_result else 0,
+            },
         )
-        print(f"Rows returned: {result.query_result.row_count}")
+        if result.query_result is not None:
+            print(f"Rows returned: {result.query_result.row_count}")
         print(f"Answer: {result.answer}")
 
 

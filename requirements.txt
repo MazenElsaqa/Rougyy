@@ -20,6 +20,7 @@ httpx>=0.27                # Ollama health checks
 # --- Added in later milestones (kept commented until needed) ---
 # chromadb>=0.5            # Milestone 4+: vector store for schema RAG (only once schema size justifies it)
 fastapi>=0.110             # Milestone 6: backend API
+python-multipart>=0.0.18   # Milestone 7: /databases/upload file uploads
 uvicorn[standard]>=0.29    # Milestone 6: ASGI server
 # sse-starlette>=2.1       # Future: SSE streaming endpoint
 # streamlit>=1.32          # Phase 22: internal debug tool

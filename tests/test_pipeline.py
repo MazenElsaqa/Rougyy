@@ -2,7 +2,15 @@ from sqlalchemy import create_engine
 
 from ai_database_agent.agent.pipeline import AgentPipeline
 from ai_database_agent.database.validator import SQLValidator
+from ai_database_agent.llm.intent import DATA_QUERY
 from ai_database_agent.memory import Conversation
+
+
+class _StubClassifier:
+    """Intent gate stub: tests target the SQL path, never the LLM classifier."""
+
+    def classify(self, question, table_names=None, conversation_turns=None):
+        return DATA_QUERY
 
 
 class _StubSQLGenerator:
@@ -51,6 +59,7 @@ def _pipeline_with_generator(sql_generator, max_attempts=3):
         sql_generator=sql_generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
         max_attempts=max_attempts,
     )
 
@@ -74,6 +83,7 @@ def test_ask_rejects_unsafe_sql_and_retries_until_attempts_exhausted():
         sql_generator=generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
         max_attempts=2,
     )
 
@@ -98,6 +108,7 @@ def test_ask_surfaces_execution_errors_after_exhausting_retries():
         sql_generator=generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
         max_attempts=3,
     )
 
@@ -123,6 +134,7 @@ def test_ask_self_corrects_and_succeeds_on_a_later_attempt():
         sql_generator=generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
         max_attempts=3,
     )
 
@@ -144,6 +156,7 @@ def test_ask_stops_retrying_as_soon_as_a_valid_result_is_returned():
         sql_generator=generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
         max_attempts=3,
     )
 
@@ -202,6 +215,7 @@ def test_ask_with_conversation_does_not_record_a_failed_turn():
         sql_generator=generator,
         answer_generator=_StubAnswerGenerator(),
         validator=SQLValidator(),
+        intent_classifier=_StubClassifier(),
         max_attempts=1,
     )
     conversation = Conversation()

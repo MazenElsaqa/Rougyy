@@ -12,11 +12,11 @@ the root project's editable install.
 
 Conversation memory (Milestone 5) is kept per session: the client
 generates a `session_id` on first load and sends it on every
-subsequent request. It's used here as an in-memory key to a
-`Conversation`. This is intentionally a plain process-local dict --
-moving it to Redis/a DB is a separate concern from wiring the API up
-in the first place, and is called out in MILESTONES.md as follow-up
-work.
+subsequent request. It's keyed to a `Conversation` held in a
+process-local dict and persisted per-turn to `data/app_state.sqlite`
+(Milestone 12), so a backend restart resumes recent turns instead of
+forgetting them. Uploaded databases persist the same way (see
+`database/registry.py::reload_from_disk`).
 
 Routes are defined without the `/api` prefix (e.g. `/health`, not
 `/api/health`) because Vercel strips `routePrefix` before forwarding
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 
@@ -47,17 +48,32 @@ from ai_database_agent.database.registry import (
     DatabaseRegistry,
     InvalidDatabaseFileError,
 )
+from ai_database_agent.llm.answer_generator import AnswerGenerator
 from ai_database_agent.llm.client import check_ollama_connection, llm_connection_info
+from ai_database_agent.llm.intent import CHAT, DATA_QUERY, IntentClassifier
 from ai_database_agent.memory.conversation import Conversation
 from ai_database_agent.observability.logging import get_logger, setup_logging
 from ai_database_agent.observability.tracing import get_tracer, setup_tracing
+from ai_database_agent.storage.state_store import StateStore
 
 setup_logging(log_dir=_ROOT / "logs")
 setup_tracing()
 _tracer = get_tracer(__name__)
 _log = get_logger(__name__)
 
-app = fastapi.FastAPI(title="Rougyy Agent API")
+_state_store = StateStore(_ROOT / "data" / "app_state.sqlite")
+
+
+@asynccontextmanager
+async def _lifespan(_: fastapi.FastAPI):
+    """Milestone 12: on startup, re-register previously uploaded
+    databases from disk so they reappear without re-uploading."""
+    reloaded = _registry.reload_from_disk()
+    _log.info("backend.startup", extra={"reloaded_databases": reloaded})
+    yield
+
+
+app = fastapi.FastAPI(title="Rougyy Agent API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,7 +116,12 @@ async def log_requests(request: fastapi.Request, call_next):
     )
     return response
 
-_registry = DatabaseRegistry(upload_dir=_ROOT / "data" / "uploads")
+_registry = DatabaseRegistry(upload_dir=_ROOT / "data" / "uploads", state_store=_state_store)
+
+# Shared, stateless helpers: one intent classification per question
+# (not one per database in fan-out), and one chat replier.
+_intent_classifier = IntentClassifier()
+_chat_answerer = AnswerGenerator()
 _conversations: dict[str, Conversation] = {}
 _conversations_lock = Lock()
 
@@ -112,7 +133,9 @@ def _get_conversation(session_id: str) -> Conversation:
     with _conversations_lock:
         conversation = _conversations.get(session_id)
         if conversation is None:
-            conversation = Conversation()
+            # Milestone 12: resume recent turns from disk when this
+            # session talked to a previous process lifetime.
+            conversation = Conversation.resume(session_id, _state_store)
             _conversations[session_id] = conversation
         return conversation
 
@@ -204,6 +227,8 @@ class AskResponse(BaseModel):
     # Milestone 8: one entry per database this question was run against.
     # Length 1 for the common single-database case.
     per_database: list[PerDatabaseAskResult] = []
+    # Intent gate: CHAT replies skip SQL entirely.
+    intent: str = DATA_QUERY
 
     @property
     def success(self) -> bool:
@@ -263,12 +288,12 @@ class TableDetailResponse(BaseModel):
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/llm/health")
-async def llm_health() -> dict[str, object]:
+def llm_health() -> dict[str, object]:
     connected, message = check_ollama_connection()
     return {
         "status": "ok" if connected else "error",
@@ -278,7 +303,7 @@ async def llm_health() -> dict[str, object]:
 
 
 @app.get("/databases", response_model=DatabaseListResponse)
-async def list_databases() -> DatabaseListResponse:
+def list_databases() -> DatabaseListResponse:
     """Every database currently registered (Milestone 7/8): the
     original configured one plus any the user has uploaded.
     """
@@ -318,17 +343,17 @@ async def upload_database(file: fastapi.UploadFile = fastapi.File(...)) -> Datab
         display_name = Path(file.filename).stem
         entry = _registry.add_sqlite_upload(tmp_path, display_name)
     except InvalidDatabaseFileError as exc:
-        _log.warning("databases.upload.rejected", extra={"filename": file.filename, "error": str(exc)})
+        _log.warning("databases.upload.rejected", extra={"upload_filename": file.filename, "error": str(exc)})
         raise fastapi.HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    _log.info("databases.upload.success", extra={"db_id": entry.id, "filename": file.filename})
+    _log.info("databases.upload.success", extra={"db_id": entry.id, "upload_filename": file.filename})
     return DatabaseOut(id=entry.id, name=entry.name, dialect=entry.dialect, is_default=entry.is_default)
 
 
 @app.get("/schema", response_model=SchemaResponse)
-async def schema(db_id: str = DEFAULT_DB_ID) -> SchemaResponse:
+def schema(db_id: str = DEFAULT_DB_ID) -> SchemaResponse:
     """Full database schema, for the sidebar in the chat UI."""
     with _tracer.start_as_current_span("api.schema") as span:
         span.set_attribute("api.db_id", db_id)
@@ -352,7 +377,7 @@ async def schema(db_id: str = DEFAULT_DB_ID) -> SchemaResponse:
 
 
 @app.get("/schema/tables/{table_name}", response_model=TableDetailResponse)
-async def table_detail(table_name: str, db_id: str = DEFAULT_DB_ID) -> TableDetailResponse:
+def table_detail(table_name: str, db_id: str = DEFAULT_DB_ID) -> TableDetailResponse:
     """Full detail for one table: columns with types/PK flags, foreign
     keys, indexes, and sample rows -- for the "click a table to see its
     schema architecture" view in the sidebar.
@@ -402,8 +427,16 @@ async def table_detail(table_name: str, db_id: str = DEFAULT_DB_ID) -> TableDeta
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask(payload: AskRequest) -> AskResponse:
+def ask(payload: AskRequest) -> AskResponse:
     """Run one question through the full agent pipeline.
+
+    NOTE: intentionally a plain (non-async) `def`: the pipeline is
+    fully synchronous (SQLAlchemy + blocking LLM HTTP calls), and
+    FastAPI runs `def` routes in a worker threadpool. An `async def`
+    here would block the single event loop for the whole ~1min call
+    and stall every other request (/schema, /health, ...). Same reason
+    applies to the other `def` routes in this file; only
+    `upload_database` stays `async` (it awaits the file upload).
 
     Reuses the caller's `session_id` if provided (so follow-up
     questions resolve against Milestone 5 conversation memory), or
@@ -417,6 +450,11 @@ async def ask(payload: AskRequest) -> AskResponse:
     database in `per_database`, alongside a top-level result taken
     from the first database that answered successfully (so existing
     single-database callers keep working unchanged).
+
+    Intent gate: the question is classified once here (not once per
+    database). CHAT messages get a short reply without touching any
+    pipeline; DATA_QUERY fans out as before, with the intent passed
+    through so pipelines don't re-classify.
     """
     with _tracer.start_as_current_span("api.ask") as span:
         question = payload.question.strip()
@@ -440,12 +478,25 @@ async def ask(payload: AskRequest) -> AskResponse:
             },
         )
 
+        intent = _intent_classifier.classify(question, conversation_turns=conversation.recent())
+        span.set_attribute("api.intent", intent)
+
+        if intent == CHAT:
+            reply = _chat_answerer.generate_chat_reply(
+                question, conversation_turns=conversation.recent()
+            )
+            _log.info("ask.chat", extra={"session_id": session_id, "question": question})
+            return AskResponse(
+                session_id=session_id, question=question, answer=reply,
+                attempts=0, linked_tables=[], intent=CHAT,
+            )
+
         per_database: list[PerDatabaseAskResult] = []
         for db_id in db_ids:
             entry = _registry.get(db_id)
             pipeline = _get_pipeline(db_id)
             try:
-                result = pipeline.ask(question, conversation=conversation if len(db_ids) == 1 else None)
+                result = pipeline.ask(question, conversation=conversation if len(db_ids) == 1 else None, intent=intent)
             except Exception:
                 _log.exception(
                     "ask.pipeline_exception",
@@ -527,12 +578,14 @@ async def ask(payload: AskRequest) -> AskResponse:
             linked_tables=primary.linked_tables,
             query_result=primary.query_result,
             per_database=per_database,
+            intent=intent,
         )
 
 
 @app.post("/reset")
-async def reset(payload: SessionRequest) -> dict[str, str]:
+def reset(payload: SessionRequest) -> dict[str, str]:
     """Drop a session's conversation memory (the UI's "New chat" action)."""
     with _conversations_lock:
         _conversations.pop(payload.session_id, None)
+    _state_store.delete_session_turns(payload.session_id)
     return {"status": "ok"}

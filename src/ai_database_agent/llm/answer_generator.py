@@ -13,7 +13,11 @@ import json
 from ai_database_agent.config import get_settings
 from ai_database_agent.database.executor import QueryResult
 from ai_database_agent.llm.client import get_llm_client, llm_answer_model_name
-from ai_database_agent.llm.prompts import ANSWER_GENERATION_SYSTEM_PROMPT
+from ai_database_agent.llm.prompts import (
+    ANSWER_GENERATION_SYSTEM_PROMPT,
+    CHAT_SYSTEM_PROMPT,
+    UNANSWERABLE_SYSTEM_PROMPT,
+)
 from ai_database_agent.observability.tracing import get_tracer
 
 _tracer = get_tracer(__name__)
@@ -49,6 +53,50 @@ class AnswerGenerator:
                             f"Rows (JSON): {rows_json}"
                         ),
                     },
+                ],
+            )
+            return (response.choices[0].message.content or "").strip()
+
+    def generate_chat_reply(
+        self,
+        question: str,
+        table_names: list[str] | None = None,
+        conversation_turns: list | None = None,
+    ) -> str:
+        """Short conversational reply for CHAT intent: no schema, no
+        SQL, just the small chat model with a little history."""
+        with _tracer.start_as_current_span("llm.generate_chat_reply") as span:
+            span.set_attribute("llm.model", self._model)
+            tables = ", ".join(table_names or []) or "the connected database"
+            messages: list[dict[str, str]] = [
+                {"role": "system", "content": CHAT_SYSTEM_PROMPT.format(tables=tables or "the database")},
+            ]
+            for turn in (conversation_turns or [])[-3:]:
+                messages.append({"role": "user", "content": turn.question})
+                messages.append({"role": "assistant", "content": turn.answer})
+            messages.append({"role": "user", "content": question})
+            response = self._client.chat.completions.create(
+                model=self._model,
+                temperature=0,
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip()
+
+    def generate_unanswerable_reply(self, question: str, table_names: list[str] | None = None) -> str:
+        """Friendly explanation when a DATA_QUERY can't be answered
+        from the available tables (sentinel SQL / zero linked tables)."""
+        with _tracer.start_as_current_span("llm.generate_unanswerable_reply") as span:
+            span.set_attribute("llm.model", self._model)
+            tables = ", ".join(table_names or [])
+            response = self._client.chat.completions.create(
+                model=self._model,
+                temperature=0,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": UNANSWERABLE_SYSTEM_PROMPT.format(tables=tables or "the database"),
+                    },
+                    {"role": "user", "content": question},
                 ],
             )
             return (response.choices[0].message.content or "").strip()

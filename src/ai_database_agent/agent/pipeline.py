@@ -40,6 +40,14 @@ like "what about just from Canada?" resolves against what was
 actually already asked. On success, the turn is appended in place to
 the same `Conversation` object the caller passed in, so it is ready
 to reuse on the next `ask()` call without any extra bookkeeping.
+
+Intent gate (see llm/intent.py): before any schema work, the
+question is classified as CHAT or DATA_QUERY (heuristic fast-path,
+then one small LLM call, failing open to DATA_QUERY). CHAT messages
+get a short conversational reply with no schema/SQL involved. Two
+safety nets keep hopeless DATA_QUERYs cheap: zero linked tables, or
+the generator's `SELECT NULL WHERE 1=0` sentinel, both stop early
+with a friendly explanation instead of burning retries.
 """
 from __future__ import annotations
 
@@ -53,6 +61,7 @@ from ai_database_agent.database.models import DatabaseSchema
 from ai_database_agent.database.validator import SQLValidator, ValidationResult
 from ai_database_agent.llm.answer_generator import AnswerGenerator
 from ai_database_agent.llm.exemplars import SQLExemplar, get_default_exemplars
+from ai_database_agent.llm.intent import CHAT, DATA_QUERY, IntentClassifier
 from ai_database_agent.llm.sql_generator import CorrectionAttempt, SQLGenerator
 from ai_database_agent.memory.conversation import Conversation
 from ai_database_agent.observability.tracing import get_tracer
@@ -62,6 +71,14 @@ from ai_database_agent.schema.linker import SchemaLinker
 _tracer = get_tracer(__name__)
 
 MAX_ATTEMPTS = 3
+
+
+def _is_unanswerable_sentinel(sql: str) -> bool:
+    """The SQL generator is instructed to emit exactly
+    `SELECT NULL WHERE 1=0` when the question can't be answered from
+    the schema -- detect it (whitespace/case-insensitive) so the
+    pipeline can stop early with an explanation."""
+    return "".join((sql or "").lower().split()).rstrip(";") == "selectnullwhere1=0"
 
 
 class AgentResult(BaseModel):
@@ -75,6 +92,7 @@ class AgentResult(BaseModel):
     error: str | None = None
     attempts: int = 1
     linked_tables: list[str] = []
+    intent: str = DATA_QUERY
 
     @property
     def success(self) -> bool:
@@ -92,6 +110,7 @@ class AgentPipeline:
         validator: SQLValidator | None = None,
         linker: SchemaLinker | None = None,
         exemplars: list[SQLExemplar] | None = None,
+        intent_classifier: IntentClassifier | None = None,
         max_attempts: int = MAX_ATTEMPTS,
     ):
         self._engine = engine or get_engine()
@@ -101,25 +120,63 @@ class AgentPipeline:
         self._executor = QueryExecutor(self._engine)
         self._linker = linker or SchemaLinker(self._engine)
         self._exemplars = exemplars if exemplars is not None else get_default_exemplars()
+        self._intent_classifier = intent_classifier or IntentClassifier()
         self._max_attempts = max_attempts
         self._full_schema: DatabaseSchema | None = None  # lazily built, cached for this pipeline's lifetime
 
-    def ask(self, question: str, conversation: Conversation | None = None) -> AgentResult:
+    def ask(
+        self,
+        question: str,
+        conversation: Conversation | None = None,
+        intent: str | None = None,
+    ) -> AgentResult:
         with _tracer.start_as_current_span("agent.ask") as span:
             span.set_attribute("agent.question", question)
 
             conversation_turns = conversation.recent() if conversation else []
             span.set_attribute("agent.conversation_turns", len(conversation_turns))
 
+            # --- Intent gate: plain chat never touches schema/SQL. ---
+            # Callers (e.g. the backend fan-out) may classify once and
+            # pass it in; otherwise classify here.
+            full_schema = self._get_full_schema()
+            if intent is None:
+                intent = self._intent_classifier.classify(
+                    question,
+                    table_names=[t.name for t in full_schema.tables],
+                    conversation_turns=conversation_turns,
+                )
+            span.set_attribute("agent.intent", intent)
+
+            if intent == CHAT:
+                reply = self._answer_generator.generate_chat_reply(
+                    question,
+                    table_names=[t.name for t in full_schema.tables],
+                    conversation_turns=conversation_turns,
+                )
+                return AgentResult(question=question, answer=reply, attempts=0, intent=CHAT)
+
             linking_text = question
             if conversation and not conversation.is_empty():
                 linking_text = f"{conversation.context_text()} {question}"
 
-            linked_schema = self._linker.link(linking_text, self._get_full_schema())
+            linked_schema = self._linker.link(linking_text, full_schema)
             value_hints = self._linker.value_hints(linked_schema)
             schema_ddl = SchemaFormatter(linked_schema).to_ddl_with_value_hints(value_hints)
             linked_tables = [t.name for t in linked_schema.tables]
             span.set_attribute("agent.linked_tables", ",".join(linked_tables))
+
+            # Safety net: nothing relevant to link (or an empty
+            # database) -- explain instead of burning generation
+            # attempts on a hopeless question.
+            if not linked_tables:
+                reply = self._answer_generator.generate_unanswerable_reply(
+                    question, table_names=[t.name for t in full_schema.tables]
+                )
+                return AgentResult(
+                    question=question, answer=reply, attempts=0,
+                    linked_tables=[], intent=DATA_QUERY,
+                )
 
             history: list[CorrectionAttempt] = []
             last_sql: str | None = None
@@ -139,6 +196,19 @@ class AgentPipeline:
                 if not sql:
                     history.append(CorrectionAttempt(sql="", error="No SQL was returned."))
                     continue
+
+                # The generator's own signal for "not answerable from
+                # this schema" -- stop immediately with a friendly
+                # explanation instead of validating/executing/ retrying.
+                if _is_unanswerable_sentinel(sql):
+                    reply = self._answer_generator.generate_unanswerable_reply(
+                        question, table_names=[t.name for t in full_schema.tables]
+                    )
+                    return AgentResult(
+                        question=question, sql=sql, answer=reply,
+                        attempts=attempt_number, linked_tables=linked_tables,
+                        intent=DATA_QUERY,
+                    )
 
                 validation = self._validator.validate(sql)
                 last_validation = validation
