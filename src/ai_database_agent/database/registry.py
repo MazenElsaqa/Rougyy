@@ -17,10 +17,14 @@ Design notes:
     registered -- rejecting anything that isn't a real SQLite database
     (wrong file type, corrupted upload, zero-byte file, etc.) with a
     clear error instead of a confusing failure three requests later.
-  - This is process-local (an in-memory dict), matching the existing
-    session/conversation storage pattern in backend/main.py. Restarting
-    the backend forgets uploaded databases; the file on disk is not
-    deleted, so re-uploading is cheap.
+  - The in-memory dict (`_entries`) is still the source of truth while
+    the process is running. Optionally, a `StateStore` (see
+    storage/state_store.py) is used alongside it purely for
+    persistence: every successful upload/removal is mirrored to disk,
+    and on startup any previously-uploaded files still present in
+    data/uploads/ are re-registered automatically, so restarting the
+    backend no longer forgets uploaded databases and forces a
+    re-upload.
 """
 from __future__ import annotations
 
@@ -35,6 +39,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ai_database_agent.database.connection import get_engine as get_default_engine
 from ai_database_agent.observability.logging import get_logger
+from ai_database_agent.storage.state_store import StateStore
 
 _log = get_logger(__name__)
 
@@ -60,6 +65,7 @@ class DatabaseRegistry:
     """Process-wide registry of every database the app can currently query."""
 
     upload_dir: Path = field(default_factory=lambda: Path("data/uploads"))
+    store: StateStore | None = None
     _entries: dict[str, DatabaseEntry] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock)
 
@@ -73,6 +79,36 @@ class DatabaseRegistry:
             dialect=default_engine.dialect.name,
             is_default=True,
         )
+        self._rehydrate_from_store()
+
+    def _rehydrate_from_store(self) -> None:
+        """Re-register every database uploaded in a previous run. The
+        file itself was never deleted from data/uploads/ on restart --
+        only the in-memory registration was lost -- so this just
+        re-opens an Engine for each persisted record and skips (with a
+        warning, not a crash) any whose file has since gone missing.
+        """
+        if self.store is None:
+            return
+        records = self.store.list_uploaded_databases()
+        for record in records:
+            file_path = Path(record["file_path"])
+            if not file_path.exists():
+                _log.warning(
+                    "registry.rehydrate.missing_file",
+                    extra={"db_id": record["id"], "file_path": str(file_path)},
+                )
+                continue
+            engine = create_engine(f"sqlite:///{file_path.resolve()}", future=True)
+            self._entries[record["id"]] = DatabaseEntry(
+                id=record["id"],
+                name=record["name"],
+                engine=engine,
+                dialect=record["dialect"],
+                file_path=str(file_path),
+            )
+        if records:
+            _log.info("registry.rehydrate.complete", extra={"restored": len(records)})
 
     def list_databases(self) -> list[DatabaseEntry]:
         with self._lock:
