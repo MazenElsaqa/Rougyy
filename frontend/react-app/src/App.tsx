@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react"
 import useSWR from "swr"
 import { AnimatedBackground } from "./components/AnimatedBackground"
 import { AnimatedTitle } from "./components/AnimatedTitle"
@@ -63,10 +63,7 @@ export default function App() {
     const stored = loadSessions()
     return stored.length > 0 ? stored : [newSession()]
   })
-  const [activeId, setActiveId] = useState<string>(() => {
-    const stored = loadSessions()
-    return stored.length > 0 ? stored[0].id : ""
-  })
+  const [activeId, setActiveId] = useState<string>(() => loadSessions()[0]?.id ?? "")
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(loadCollapsed)
   const [theme, setTheme] = useState<Theme>(loadTheme)
@@ -79,12 +76,13 @@ export default function App() {
   const resizingRef = useRef(false)
 
   // Keep the active session valid if the list changes underneath it.
-  const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
+  const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? sessions[0], [sessions, activeId])
   const entries = active?.entries ?? []
   const selectedDbIds = active?.dbIds ?? null
 
   useEffect(() => {
-    saveSessions(sessions)
+    const timeoutId = window.setTimeout(() => saveSessions(sessions), 250)
+    return () => window.clearTimeout(timeoutId)
   }, [sessions])
 
   useEffect(() => {
@@ -109,8 +107,8 @@ export default function App() {
   const isAsking = entries.some((entry) => entry.pending)
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
-  }, [entries, activeId])
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" })
+  }, [entries.length, activeId])
 
   const updateSession = useCallback((id: string, patch: (s: ChatSession) => ChatSession) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...patch(s), updatedAt: Date.now() } : s)))
@@ -238,7 +236,7 @@ export default function App() {
   const sidebarWidthRef = useRef(sidebarWidth)
   sidebarWidthRef.current = sidebarWidth
 
-  const sidebarStyle = { "--sidebar-w": `${sidebarWidth}px` } as CSSProperties
+  const sidebarStyle = useMemo(() => ({ "--sidebar-w": `${sidebarWidth}px` }) as CSSProperties, [sidebarWidth])
 
   return (
     <div className="relative flex h-screen flex-col bg-background text-foreground">

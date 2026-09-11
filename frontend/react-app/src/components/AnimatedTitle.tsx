@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react"
 import { motion } from "framer-motion"
 
 /**
@@ -5,8 +6,8 @@ import { motion } from "framer-motion"
  * "Background Paths" hero: same staggered spring idea, restyled to the
  * app theme (foreground->muted gradient instead of neutral-900).
  */
-export function AnimatedTitle({ text }: { text: string }) {
-  const words = text.split(" ")
+export const AnimatedTitle = memo(function AnimatedTitle({ text }: { text: string }) {
+  const words = useMemo(() => text.split(" "), [text])
 
   return (
     <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl" aria-label={text}>
@@ -32,4 +33,4 @@ export function AnimatedTitle({ text }: { text: string }) {
       ))}
     </h2>
   )
-}
+})
