@@ -19,7 +19,7 @@ it once it's running, and how the whole thing works end to end.
 | Node.js | 18+ | React frontend (Vite) |
 | pip | any recent | Installing Python dependencies |
 | npm | any recent | Installing frontend dependencies |
-| An LLM API key | — | SQL generation and answer generation |
+| Ollama | latest | Local SQL generation and answer generation (recommended) |
 
 The agent talks to any **OpenAI-compatible** LLM endpoint. You can use:
 - **OpenAI** directly (`gpt-4o`, etc.)
@@ -29,6 +29,9 @@ The agent talks to any **OpenAI-compatible** LLM endpoint. You can use:
 You do **not** need to install a separate database server — the project
 ships with a small SQLite database (`concert_singer`, from the Spider
 dataset) that gets built locally by a setup script.
+
+The recommended LLM is local Ollama with `qwen2.5-coder:7b`. It is tuned for
+code and SQL tasks and does not require an OpenAI wallet or API billing.
 
 ---
 
@@ -61,10 +64,13 @@ OPENAI_API_KEY=AIza...
 OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 LLM_MODEL=gemini-1.5-pro
 
-# Option C: Local Ollama (no real key needed)
+# Recommended: Local Ollama (no paid API account needed)
+# Run these once before starting the project:
+# ollama serve
+# ollama pull qwen2.5-coder:7b
 OPENAI_API_KEY=ollama
 OPENAI_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=llama3
+LLM_MODEL=qwen2.5-coder:7b
 ```
 
 ```bash
@@ -285,7 +291,7 @@ Rougyy/
 
 | Problem | Likely cause / fix |
 |---|---|
-| `OPENAI_API_KEY` errors on startup | `.env` wasn't created, or the key wasn't set — see step 3 above |
+| LLM connection errors | Start Ollama with `ollama serve`, then confirm `qwen2.5-coder:7b` is installed with `ollama list` |
 | "no such table" errors | `python scripts/setup_db.py` wasn't run yet |
 | Frontend loads but questions fail | Backend isn't running, or isn't on port 8000 — check terminal 1 |
 | Agent gives a wrong answer | Check the SQL in the inspector/CLI output first — the SQL, not the phrasing, is where accuracy issues actually live |
