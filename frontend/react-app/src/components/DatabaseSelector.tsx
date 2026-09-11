@@ -40,11 +40,11 @@ export function DatabaseSelector({
   }
 
   return (
-    <div className="relative">
+    <div className="relative w-full">
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-foreground hover:bg-surface-muted"
+        className="flex w-full items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-2 text-[12.5px] font-medium text-foreground shadow-sm transition-all hover:border-muted-foreground/40 hover:shadow"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -57,7 +57,7 @@ export function DatabaseSelector({
             strokeLinecap="round"
           />
         </svg>
-        <span className="max-w-[140px] truncate">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
         <svg viewBox="0 0 20 20" fill="none" className="h-3 w-3 text-muted" aria-hidden="true">
           <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>

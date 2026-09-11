@@ -3,6 +3,7 @@ import { fetchTableDetail, type TableDetail } from "../lib/api"
 
 interface TableDetailModalProps {
   tableName: string
+  databaseId?: string
   onClose: () => void
 }
 
@@ -12,7 +13,7 @@ interface TableDetailModalProps {
  * type/nullability/PK flag, its foreign keys as relationships to
  * other tables, its indexes, and a few real sample rows.
  */
-export function TableDetailModal({ tableName, onClose }: TableDetailModalProps) {
+export function TableDetailModal({ tableName, databaseId, onClose }: TableDetailModalProps) {
   const [detail, setDetail] = useState<TableDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -21,7 +22,7 @@ export function TableDetailModal({ tableName, onClose }: TableDetailModalProps) 
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetchTableDetail(tableName)
+    fetchTableDetail(tableName, databaseId)
       .then((result) => {
         if (!cancelled) setDetail(result)
       })
@@ -34,7 +35,7 @@ export function TableDetailModal({ tableName, onClose }: TableDetailModalProps) 
     return () => {
       cancelled = true
     }
-  }, [tableName])
+  }, [tableName, databaseId])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {

@@ -9,6 +9,26 @@
       name="description"
       content="Rougyy is a natural-language-to-SQL agent. Ask a question about your database and get a grounded, SQL-backed answer."
     />
+    <style>
+      html {
+        background: #f5f6f8;
+      }
+      html.dark {
+        background: #08080d;
+      }
+    </style>
+    <script>
+      // Apply the saved theme before first paint (no light/dark flash).
+      try {
+        var theme = localStorage.getItem("rougyy.theme");
+        if (theme !== "dark" && theme !== "light") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        if (theme === "dark") document.documentElement.classList.add("dark");
+      } catch (e) {
+        // ignore
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

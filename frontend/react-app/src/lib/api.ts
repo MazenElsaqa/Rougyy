@@ -84,6 +84,8 @@ export interface AskResponse {
   linked_tables: string[]
   query_result: QueryResult | null
   per_database: PerDatabaseAskResult[]
+  /** CHAT replies skip SQL entirely; DATA_QUERY is the classic path. */
+  intent: string
 }
 
 export interface DatabaseInfo {

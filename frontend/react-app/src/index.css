@@ -1,28 +1,60 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui;
   --font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, monospace;
 
-  --color-background: #f5f6f8;
-  --color-foreground: #14181f;
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
 
-  --color-surface: #ffffff;
-  --color-surface-muted: #eef0f3;
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
 
-  --color-border: #e2e5ea;
+  --color-border: var(--border);
 
-  --color-muted: #6b7280;
-  --color-muted-foreground: #9aa1ab;
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
 
-  --color-primary: #0e7c72;
+  --color-primary: var(--primary);
   --color-primary-foreground: #ffffff;
-  --color-primary-muted: #e3f1ef;
+  --color-primary-muted: var(--primary-muted);
 
-  --color-destructive: #b3261e;
-  --color-destructive-muted: #fbebe9;
+  --color-destructive: var(--destructive);
+  --color-destructive-muted: var(--destructive-muted);
 
   --radius: 0.5rem;
+}
+
+:root {
+  --bg: #f5f6f8;
+  --fg: #000000;
+  --surface: #ffffff;
+  --surface-muted: #eef0f3;
+  --border: #e2e5ea;
+  --muted: #6b7280;
+  --muted-foreground: #9aa1ab;
+  --primary: #d71921;
+  --primary-muted: #fbe7e8;
+  --destructive: #b3261e;
+  --destructive-muted: #fbebe9;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #08080d;
+  --fg: #f4f4f5;
+  --surface: #13131a;
+  --surface-muted: #1e1e28;
+  --border: #2a2a36;
+  --muted: #a1a1aa;
+  --muted-foreground: #63636e;
+  --primary: #e5323a;
+  --primary-muted: #2a1215;
+  --destructive: #f87171;
+  --destructive-muted: #2a1214;
+  color-scheme: dark;
 }
 
 html,
@@ -32,4 +64,79 @@ body {
 
 body {
   font-feature-settings: "cv11", "ss01";
+}
+
+/* Slim, theme-matched scrollbars for sidebar / chat / tables */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --- Liquid glass surfaces (light theme) --- */
+.glass {
+  background: color-mix(in srgb, #ffffff 68%, transparent);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow:
+    0 8px 32px rgba(20, 24, 31, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.glass-strong {
+  background: color-mix(in srgb, #ffffff 85%, transparent);
+  backdrop-filter: blur(28px) saturate(1.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 12px 40px rgba(20, 24, 31, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.glass-input {
+  background: color-mix(in srgb, #ffffff 80%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 10px 36px rgba(215, 25, 33, 0.08),
+    0 4px 14px rgba(20, 24, 31, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+/* --- Liquid glass surfaces (dark theme) --- */
+.dark .glass {
+  background: rgba(18, 18, 27, 0.55);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.dark .glass-strong {
+  background: rgba(22, 22, 33, 0.78);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.dark .glass-input {
+  background: rgba(20, 20, 30, 0.7);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 10px 36px rgba(229, 50, 58, 0.12),
+    0 4px 14px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
