@@ -4,9 +4,10 @@ Milestone 2 — run the evaluation harness from the command line.
     python scripts/run_eval.py
 
 Runs every case in the default eval dataset through the real
-AgentPipeline (this calls the configured LLM — set OPENAI_API_KEY,
-and OPENAI_BASE_URL/LLM_MODEL if not using OpenAI directly, in .env
-first) against the concert_singer database, and prints a per-case
+AgentPipeline (this calls the configured local Ollama model by default;
+start Ollama and install qwen2.5-coder:7b first, or override the
+OpenAI-compatible settings in .env) against the concert_singer database,
+and prints a per-case
 breakdown plus the aggregate metrics that gate every milestone after
 this one.
 """

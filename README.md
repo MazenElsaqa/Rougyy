@@ -68,8 +68,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 cp .env.example .env
-# edit .env: set OPENAI_API_KEY (and OPENAI_BASE_URL/LLM_MODEL if not
-# using OpenAI directly — e.g. Gemini's OpenAI-compatible endpoint)
+  # .env defaults to local Ollama with qwen2.5-coder:7b.
+  # Install Ollama and run: ollama pull qwen2.5-coder:7b
+  # Keep Ollama running with: ollama serve
 
 # builds data/concert_singer.sqlite and data/_smoke_test.sqlite locally
 # (both are gitignored — regenerate any time)
@@ -132,9 +133,9 @@ See `.env.example`. Key ones so far:
 | `QUERY_TIMEOUT_MS` | Hard timeout for query execution (Phase 3) |
 | `OTEL_SERVICE_NAME` | Service name attached to trace spans |
 | `OTEL_TRACES_EXPORTER` | `console` (default) or `otlp` |
-| `OPENAI_API_KEY` | API key for the configured OpenAI-compatible provider (Milestone 1) |
-| `OPENAI_BASE_URL` | Override to point at a non-OpenAI provider (e.g. Gemini's OpenAI-compatible endpoint, or a local Ollama server) |
-| `LLM_MODEL` | Model name passed to the provider (Milestone 1) |
+| `OPENAI_API_KEY` | OpenAI-compatible credential; defaults to `ollama` for local use |
+| `OPENAI_BASE_URL` | Provider endpoint; defaults to `http://localhost:11434/v1` for Ollama |
+| `LLM_MODEL` | Model name; defaults to `qwen2.5-coder:7b` for SQL generation |
 
 ## Testing
 

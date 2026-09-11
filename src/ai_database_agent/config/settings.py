@@ -24,9 +24,10 @@ class Settings(BaseSettings):
     #   OpenAI:  base_url=None (default), api_key=sk-...
     #   Gemini:  base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=AIza...
     #   Ollama:  base_url="http://localhost:11434/v1", api_key="ollama"
-    openai_api_key: str = ""
-    openai_base_url: str | None = None   # None = use OpenAI default
-    llm_model: str = "gpt-4o"
+    # Ollama is the local-first default so the project works without a paid API account.
+    openai_api_key: str = "ollama"
+    openai_base_url: str | None = "http://localhost:11434/v1"
+    llm_model: str = "qwen2.5-coder:7b"
 
     # --- Query execution (Phase 3 timeout) ---
     query_timeout_ms: int = 5000
