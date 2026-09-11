@@ -5,9 +5,11 @@ interface SchemaSidebarProps {
   tables: TableSchema[]
   linkedTables: string[]
   loading: boolean
+  error?: string | null
+  onRetry?: () => void
 }
 
-export function SchemaSidebar({ dialect, tables, linkedTables, loading }: SchemaSidebarProps) {
+export function SchemaSidebar({ dialect, tables, linkedTables, loading, error, onRetry }: SchemaSidebarProps) {
   return (
     <aside className="flex h-full w-full flex-col border-border bg-surface md:w-64 md:border-r" aria-label="Database schema">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -21,6 +23,22 @@ export function SchemaSidebar({ dialect, tables, linkedTables, loading }: Schema
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {loading && <p className="px-2 py-2 text-sm text-muted">Loading schema…</p>}
+
+        {!loading && error && (
+          <div className="mx-1 rounded-md border border-destructive/20 bg-destructive-muted px-3 py-2.5">
+            <p className="text-[13px] font-medium text-destructive">Backend not reachable</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted">{error}</p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-2 rounded-md border border-border px-2.5 py-1 text-[12px] font-medium text-foreground hover:bg-surface-muted"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
 
         {!loading &&
           tables.map((table) => {

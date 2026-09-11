@@ -17,7 +17,9 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const { data: schema, isLoading: schemaLoading } = useSWR("schema", fetchSchema)
+  const { data: schema, isLoading: schemaLoading, error: schemaError, mutate: retrySchema } = useSWR("schema", fetchSchema, {
+    shouldRetryOnError: false,
+  })
 
   const lastLinkedTables = entries.at(-1)?.response?.linked_tables ?? []
   const isAsking = entries.some((entry) => entry.pending)
@@ -92,6 +94,8 @@ export default function App() {
             tables={schema?.tables ?? []}
             linkedTables={lastLinkedTables}
             loading={schemaLoading}
+            error={schemaError instanceof Error ? schemaError.message : schemaError ? String(schemaError) : null}
+            onRetry={() => retrySchema()}
           />
         </div>
 

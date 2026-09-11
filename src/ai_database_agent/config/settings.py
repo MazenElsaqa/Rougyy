@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     openai_base_url: str | None = None
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
+    # Optional override: chat model used only for answer phrasing.
+    # Falls back to ollama_model when unset, so existing setups keep working.
+    ollama_answer_model: str | None = None
     llm_model: str = "gpt-4o"
+    # Optional override for hosted OpenAI-compatible providers.
+    llm_answer_model: str | None = None
 
     # --- Query execution (Phase 3 timeout) ---
     query_timeout_ms: int = 5000

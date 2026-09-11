@@ -12,7 +12,7 @@ import json
 
 from ai_database_agent.config import get_settings
 from ai_database_agent.database.executor import QueryResult
-from ai_database_agent.llm.client import get_llm_client, llm_model_name
+from ai_database_agent.llm.client import get_llm_client, llm_answer_model_name
 from ai_database_agent.llm.prompts import ANSWER_GENERATION_SYSTEM_PROMPT
 from ai_database_agent.observability.tracing import get_tracer
 
@@ -26,7 +26,7 @@ class AnswerGenerator:
 
     def __init__(self, client=None, model: str | None = None):
         self._client = client or get_llm_client()
-        self._model = model or llm_model_name()
+        self._model = model or llm_answer_model_name()
 
     def generate(self, question: str, sql: str, query_result: QueryResult) -> str:
         with _tracer.start_as_current_span("llm.generate_answer") as span:

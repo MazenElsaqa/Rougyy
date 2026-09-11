@@ -74,3 +74,17 @@ def test_reports_zero_rows_faithfully():
     assert "no" in answer.lower()
     user_message = client.chat.completions.last_kwargs["messages"][1]["content"]
     assert "Row count: 0" in user_message
+
+
+def test_defaults_to_answer_model_not_sql_model(monkeypatch):
+    from ai_database_agent.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("OLLAMA_ANSWER_MODEL", "qwen3.5:4b-mlx")
+    try:
+        generator = AnswerGenerator(client=_FakeClient("ok"))
+        assert generator._model == "qwen3.5:4b-mlx"
+    finally:
+        get_settings.cache_clear()

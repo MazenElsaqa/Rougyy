@@ -135,10 +135,12 @@ See `.env.example`. Key ones so far:
 | `OTEL_TRACES_EXPORTER` | `console` (default) or `otlp` |
 | `LLM_PROVIDER` | Provider selection: `ollama` or `openai` |
 | `OLLAMA_BASE_URL` | Local Ollama host, normally `http://localhost:11434` |
-| `OLLAMA_MODEL` | Installed Ollama model, for example `llama3.2` |
+| `OLLAMA_MODEL` | SQL-generation (coder) model, e.g. `qwen2.5-coder:7b` |
+| `OLLAMA_ANSWER_MODEL` | Answer-phrasing (chat) model, e.g. `qwen3.5:4b-mlx` (falls back to `OLLAMA_MODEL`) |
 | `OPENAI_API_KEY` | API key for a hosted OpenAI-compatible provider |
 | `OPENAI_BASE_URL` | Optional hosted provider endpoint |
-| `LLM_MODEL` | Hosted provider model name |
+| `LLM_MODEL` | Hosted provider SQL model name |
+| `LLM_ANSWER_MODEL` | Hosted provider answer model (falls back to `LLM_MODEL`) |
 
 ### Local Ollama on macOS
 

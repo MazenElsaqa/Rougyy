@@ -4,6 +4,12 @@
 // hardcoded host is needed anywhere in the app.
 const API_BASE = "/api"
 
+// Local Ollama answers take ~60-90s (two LLM calls per question), so the
+// ask timeout is generous. Schema never touches the LLM and should be instant;
+// if it times out the backend is almost certainly not running.
+const SCHEMA_TIMEOUT_MS = 15_000
+const ASK_TIMEOUT_MS = 300_000
+
 export interface TableSchema {
   name: string
   columns: string[]
@@ -35,6 +41,21 @@ export interface AskResponse {
   query_result: QueryResult | null
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s — is the backend running?`)
+    }
+    throw new Error(`Cannot reach the backend (${url}) — is it running on port 8000? Run ./run.sh`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function parseOrThrow<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
@@ -45,16 +66,20 @@ async function parseOrThrow<T>(response: Response): Promise<T> {
 }
 
 export async function fetchSchema(): Promise<SchemaResponse> {
-  const response = await fetch(`${API_BASE}/schema`)
+  const response = await fetchWithTimeout(`${API_BASE}/schema`, {}, SCHEMA_TIMEOUT_MS)
   return parseOrThrow<SchemaResponse>(response)
 }
 
 export async function askQuestion(question: string, sessionId: string): Promise<AskResponse> {
-  const response = await fetch(`${API_BASE}/ask`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, session_id: sessionId }),
-  })
+  const response = await fetchWithTimeout(
+    `${API_BASE}/ask`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, session_id: sessionId }),
+    },
+    ASK_TIMEOUT_MS,
+  )
   return parseOrThrow<AskResponse>(response)
 }
 

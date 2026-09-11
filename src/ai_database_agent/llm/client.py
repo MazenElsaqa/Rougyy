@@ -23,8 +23,22 @@ def _ollama_openai_url(base_url: str) -> str:
 
 
 def llm_model_name() -> str:
+    """SQL-generation model (coder). Kept as the default entry point."""
     settings = get_settings()
     return settings.ollama_model if settings.llm_provider.lower() == "ollama" else settings.llm_model
+
+
+def llm_sql_model_name() -> str:
+    """Explicit alias for the SQL-generation model."""
+    return llm_model_name()
+
+
+def llm_answer_model_name() -> str:
+    """Answer-phrasing model (chat). Falls back to the SQL model when unset."""
+    settings = get_settings()
+    if settings.llm_provider.lower() == "ollama":
+        return settings.ollama_answer_model or settings.ollama_model
+    return settings.llm_answer_model or settings.llm_model
 
 
 def llm_connection_info() -> dict[str, str]:
@@ -34,11 +48,15 @@ def llm_connection_info() -> dict[str, str]:
         return {
             "provider": "ollama",
             "model": settings.ollama_model,
+            "sql_model": settings.ollama_model,
+            "answer_model": settings.ollama_answer_model or settings.ollama_model,
             "base_url": _ollama_openai_url(settings.ollama_base_url),
         }
     return {
         "provider": settings.llm_provider,
         "model": settings.llm_model,
+        "sql_model": settings.llm_model,
+        "answer_model": settings.llm_answer_model or settings.llm_model,
         "base_url": settings.openai_base_url or "https://api.openai.com/v1",
     }
 
@@ -53,7 +71,7 @@ def get_llm_client() -> OpenAI:
 
 
 def check_ollama_connection() -> tuple[bool, str]:
-    """Check that Ollama is reachable and the configured model is installed."""
+    """Check that Ollama is reachable and the configured model(s) are installed."""
     settings = get_settings()
     if settings.llm_provider.lower() != "ollama":
         return True, "Ollama is not the selected provider."
@@ -61,10 +79,18 @@ def check_ollama_connection() -> tuple[bool, str]:
         response = httpx.get(f"{settings.ollama_base_url.rstrip('/')}/api/tags", timeout=3.0)
         response.raise_for_status()
         models = {model.get("name", "") for model in response.json().get("models", [])}
-        configured = settings.ollama_model
-        installed = configured in models or any(name.split(":", 1)[0] == configured.split(":", 1)[0] for name in models)
-        if not installed:
-            return False, f"Model '{configured}' is not installed. Run: ollama pull {configured}"
-        return True, "Ollama is reachable and the configured model is installed."
+
+        def _installed(configured: str) -> bool:
+            return configured in models or any(
+                name.split(":", 1)[0] == configured.split(":", 1)[0] for name in models
+            )
+
+        required = {settings.ollama_model}
+        if settings.ollama_answer_model:
+            required.add(settings.ollama_answer_model)
+        missing = [m for m in required if not _installed(m)]
+        if missing:
+            return False, f"Model(s) {missing} not installed. Run: ollama pull {missing[0]}"
+        return True, "Ollama is reachable and the configured model(s) are installed."
     except httpx.HTTPError:
         return False, f"Cannot reach Ollama at {settings.ollama_base_url}. Run: ollama serve"

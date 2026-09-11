@@ -36,6 +36,7 @@ traces/
 frontend/react-app/node_modules/
 frontend/react-app/dist/
 frontend/react-app/.vite/
+frontend/react-app/*.tsbuildinfo
 
 # Backend service (Milestone 6, isolated env per experimentalServices)
 backend/.venv/
