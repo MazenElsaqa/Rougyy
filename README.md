@@ -1,179 +1,214 @@
-# AI Database Agent
+<div align="center">
 
-A production-oriented conversational AI agent that talks to a
-database in natural language, with memory, hierarchical schema-aware
-RAG, validated and self-correcting SQL generation, and grounded
-natural-language answers.
+# 🐈‍⬛ DIDA
 
-- **Database**: SQLite (`concert_singer`, from the Spider dataset)
-- **LLM**: Google Gemini API
-- **Backend**: FastAPI (added in Phase 23)
-- **Frontend**: React (added in Phase 23b) — Streamlit is kept as an
-  internal dev/debug tool only
+### Ask your database in plain English — get answers backed by real SQL.
 
-This project was originally scoped as 40+ granular phases per
-`ai-database-agent-spec-v2.md`. It is now being built as a series of
-**milestones**, each of which ships a working, measurable end-to-end
-system before adding sophistication — see `MILESTONES.md` for the
-restructured plan and how it maps back to the original phase numbers.
+DIDA turns natural-language questions into validated, read-only SQL, runs them against
+your database, and answers from the actual rows returned. **100% offline** with local
+models. No hallucinated facts, ever.
 
-## Core principle
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React 19](https://img.shields.io/badge/React_19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![Ollama](https://img.shields.io/badge/Ollama-local-000000?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Tests](https://img.shields.io/badge/tests-101_passing-D71921?style=for-the-badge)](tests/)
 
-RAG provides context about the database. **The database provides the
-factual answer.** The LLM never touches the database directly —
-every generated SQL statement passes through validation before
-execution, and execution is read-only.
+</div>
 
-## Status
+---
 
-- [x] Phase 0 — Repository and environment
-- [x] Phase 1 — Database foundation + tracing setup
-- [x] Phase 2 — Schema representation
-- [x] Phase 3 — Safe query execution
-- [x] **Milestone 1 — Thin end-to-end skeleton** (question -> LLM
-      generates SQL -> AST validation -> read-only execution ->
-      grounded answer). Folds in Phase 4 (AST validation) and
-      Phase 5 (LLM integration).
-- [x] **Milestone 2 — Evaluation harness** (12-question held-out set
-      for `concert_singer`, scored by Spider-style execution
-      accuracy — comparing returned rows, not SQL text). Pulls
-      Phase 18 (Evaluation) forward as the regression gate for every
-      milestone after it.
-- [x] **Milestone 3 — Self-correction loop** (SQL validation/execution
-      errors are fed back to the LLM and retried, capped at 3 attempts
-      by default). Pulls Phases 6-9 (query generation & correction)
-      forward as the highest-ROI accuracy feature.
-- [x] **Milestone 4 — Lightweight schema linking** (keyword/FK-closure
-      table selection + categorical value grounding + few-shot
-      exemplars, no vector store). Pulls the useful part of Phases
-      11-12 forward while deferring ChromaDB until schema size
-      justifies it.
-- [x] **Milestone 5 — Conversation memory** (a bounded window of
-      recent turns is folded into schema linking and replayed into
-      every generation attempt, so follow-ups like "what about from
-      Canada?" resolve against the previous turn). Maps to the
-      original Phase 10.
-- [x] **Milestone 6 — Serving layer** (FastAPI backend exposing the
-      pipeline over HTTP with per-session conversation memory, plus a
-      React + Vite + Tailwind chat UI with a schema sidebar and a SQL
-      / results inspector). Maps to the original Phases 23 and 23b.
+## 📸 Screenshots
 
-See `MILESTONES.md` for details on each milestone.
+| Empty state (dark) | Conversation (light) |
+|---|---|
+| ![DIDA empty state with animated greeting, glass navbar and wave background](docs/screenshots/hero-dark.png) | ![DIDA answering with SQL inspector and result rows](docs/screenshots/chat-light.png) |
 
-## Installation
+| Schema inspector (dark) |
+|---|
+| ![DIDA schema dock with linked-table highlight](docs/screenshots/schema-dock.png) |
+
+---
+
+## ✨ Why DIDA?
+
+| | DIDA | A plain chatbot |
+|---|---|---|
+| Answers from | 🔍 Real query results | 💭 Model weights (may hallucinate) |
+| Shows its work | ✅ Exact SQL + rows every time | ❌ Black box |
+| Dangerous queries | 🛡️ Rejected before execution | ⚠️ Hope for the best |
+| Internet needed | ❌ Runs fully offline | ✅ Usually required |
+| Your own files | ✅ SQLite, CSV, Excel | ❌ Fixed demo data |
+
+> **Core principle:** the LLM never touches the database. It only *proposes* SQL.
+> The database is always the source of truth.
+
+---
+
+## 🚀 Quickstart (2 minutes)
+
+```bash
+cd ai-database-agent-2
+./run.sh
+```
+
+Then open **http://localhost:5173** — backend runs on `:8000`, frontend on `:5173`.
+`run.sh` checks everything for you (venv, `.env`, database, Ollama models) and starts both servers.
+`Ctrl-C` stops everything.
+
+Other modes:
+
+```bash
+./run.sh --check                            # environment checks only
+./run.sh --cli "How many singers are there?" # one CLI question
+./run.sh --chat                             # interactive CLI chat with memory
+./run.sh --backend                          # backend only
+./run.sh --frontend                         # frontend only
+```
+
+---
+
+## 🛠️ Full setup (first time on a new machine)
+
+**1. Requirements** — Python 3.11+, Node 18+, [Ollama](https://ollama.com/download)
+
+**2. Python environment**
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+./.venv/bin/pip install -r requirements.txt
 cp .env.example .env
-# edit .env for local Ollama (recommended for local testing):
-# LLM_PROVIDER=ollama, OLLAMA_MODEL=llama3.2
-# Or configure OPENAI_API_KEY/OPENAI_BASE_URL/LLM_MODEL for a hosted provider.
-
-# builds data/concert_singer.sqlite and data/_smoke_test.sqlite locally
-# (both are gitignored — regenerate any time)
-python scripts/setup_db.py
+python scripts/setup_db.py     # builds data/concert_singer.sqlite
 ```
 
-## Running
+**3. Local models** (in a separate terminal)
 
 ```bash
-# Phase 1 demo: inspect the schema and print a summary
-python main.py
-
-# Milestone 1 demo: ask a real question end to end
-# (Milestone 3: retries up to 3 times if validation/execution fails)
-# (Milestone 4: schema is linked to relevant tables + few-shot exemplars
-#  + categorical value hints before every generation attempt)
-python main.py "Which singers are from France?"
-python main.py "How many concerts were held at each stadium?"
-
-# Milestone 5: interactive chat mode with conversation memory across turns
-# e.g. ask "Which singers are from France?" then follow up with
-# "What about from Canada?" and it resolves against the prior turn
-python main.py --chat
-
-# Milestone 2: run the evaluation harness against the held-out set
-python scripts/run_eval.py
+ollama serve
+ollama pull qwen2.5-coder:7b     # writes SQL
+ollama pull qwen3.5:4b-mlx       # phrases answers
 ```
 
-### Milestone 6 — web UI
+> 🧠 **Split-brain models:** a *coder* model writes SQL, a *chat* model phrases answers.
+> Override with `OLLAMA_MODEL` / `OLLAMA_ANSWER_MODEL` in `.env`. Prefer hosted APIs?
+> Set `LLM_PROVIDER=openai` with `OPENAI_API_KEY` / `LLM_MODEL` instead.
+
+**4. Run it** — `./run.sh` (see above).
+
+---
+
+## 🎯 Features
+
+### 💬 Chat that understands you
+- **Intent gate** — greetings and small talk (`hi`, `عامل ايه؟`) get instant conversational replies with zero database work; data questions take the full SQL path
+- **Conversation memory** — follow-ups resolve against the last 5 turns (*"Which singers are from France?" → "What about from Canada?"*), per chat, surviving backend restarts
+- **Cancel anytime** — the red Cancel pill aborts your wait instantly *and* tells the server to stop before its next step
+- **Command-bar input** — `↑` recalls previous questions, `⌘/Ctrl+Enter` runs SQL, auto-growing glass input
+
+### 🗄️ Bring your own data
+- **Upload** SQLite (`.sqlite/.db`), CSV (auto delimiter + `utf-8/cp1256` Arabic encodings), or Excel (every sheet becomes a table)
+- **Target one database or search all at once** — multi-DB answers come back labeled per database
+- **Hand-written SQL editor** (`</>` in the navbar) — prefilled with `SELECT * … LIMIT 5` on the selected DB, guarded by the same read-only validation
+
+### 🔍 Total transparency
+- Every answer ships with the **exact SQL**, linked tables, and raw rows
+- **Table inspector** — click any table for columns, keys, relationships, indexes, sample rows
+- **Self-correcting** — validation/execution errors feed back to the model (up to 3 attempts)
+
+### 🎨 Liquid-glass experience
+- Light/dark glass theme (Elsewedy 🔴 `#D71921` identity), animated wave background
+- Multi-chat sidebar history, collapsible + resizable panels, table search
+- A mood-following **cat companion**: drag her anywhere, tap to switch corners, hover and she washes her face 😺
+- Built-in **interactive user manual** (📖 icon) — a guided spotlight tour of every feature
+
+---
+
+## 🧭 How a question flows
+
+```mermaid
+flowchart TD
+    Q[Your question] --> I{Intent gate}
+    I -- small talk --> C[Chat reply]
+    I -- data question --> L[Schema linking]
+    L --> G[LLM writes SQL]
+    G --> V{AST validation}
+    V -- rejected --> R[Retry with error feedback ×3]
+    R --> G
+    V -- SELECT only --> E[Read-only execution]
+    E -- DB error --> R
+    E -- rows --> A[Grounded answer + SQL + rows]
+```
+
+---
+
+## 💻 Use it your way
+
+**Web app** — chat, inspector, history, uploads, SQL editor, dark mode.
+
+**CLI** — scriptable and fast:
 
 ```bash
-# terminal 1: FastAPI backend
-cd backend
-pip install -e .
-uvicorn main:app --reload --port 8000
-
-# terminal 2: React frontend (proxies /api to the backend above)
-cd frontend/react-app
-npm install
-npm run dev
+./.venv/bin/python main.py "How many concerts were held at each stadium?"
+./.venv/bin/python main.py --chat     # persistent memory in one session
+./.venv/bin/python main.py            # inspect schema
 ```
 
-On Vercel, `vercel.json`'s `experimentalServices` wires both up as one
-project (`backend` at `/api`, `frontend` at `/`) — no separate deploy
-step or hardcoded host needed in the frontend code.
+**HTTP API** — `GET /health /llm/health /schema /databases · POST /ask /reset /cancel /databases/upload /sql/execute`
 
-Schema inspection prints OpenTelemetry trace spans to the console for
-every step (Phase 1 tracing bootstrap). The question mode additionally
-prints the LLM-generated SQL, the row count returned, and the final
-grounded answer — or a clear error if generation, validation, or
-execution failed at any stage.
+**Evaluation harness** — Spider-style execution accuracy on a 12-question held-out set:
 
-## Environment variables
+```bash
+./.venv/bin/python scripts/run_eval.py
+./.venv/bin/python -m pytest tests/ -q   # 101 tests
+```
 
-See `.env.example`. Key ones so far:
+---
 
-| Variable | Purpose |
+## ⚙️ Configuration (`.env`)
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DATABASE_URL` | Main SQLite database | `./data/concert_singer.sqlite` |
+| `LLM_PROVIDER` | `ollama` or `openai` | `ollama` |
+| `OLLAMA_MODEL` | SQL-writing (coder) model | `qwen2.5-coder:7b` |
+| `OLLAMA_ANSWER_MODEL` | Answer-phrasing (chat) model | `qwen3.5:4b-mlx` |
+| `QUERY_TIMEOUT_MS` | Hard cap per query | `5000` |
+
+---
+
+## 🆘 Troubleshooting
+
+| Symptom | Fix |
 |---|---|
-| `DATABASE_URL` | SQLAlchemy connection string to the SQLite database |
-| `QUERY_TIMEOUT_MS` | Hard timeout for query execution (Phase 3) |
-| `OTEL_SERVICE_NAME` | Service name attached to trace spans |
-| `OTEL_TRACES_EXPORTER` | `console` (default) or `otlp` |
-| `LLM_PROVIDER` | Provider selection: `ollama` or `openai` |
-| `OLLAMA_BASE_URL` | Local Ollama host, normally `http://localhost:11434` |
-| `OLLAMA_MODEL` | SQL-generation (coder) model, e.g. `qwen2.5-coder:7b` |
-| `OLLAMA_ANSWER_MODEL` | Answer-phrasing (chat) model, e.g. `qwen3.5:4b-mlx` (falls back to `OLLAMA_MODEL`) |
-| `OPENAI_API_KEY` | API key for a hosted OpenAI-compatible provider |
-| `OPENAI_BASE_URL` | Optional hosted provider endpoint |
-| `LLM_MODEL` | Hosted provider SQL model name |
-| `LLM_ANSWER_MODEL` | Hosted provider answer model (falls back to `LLM_MODEL`) |
+| `Cannot reach the backend` | Backend isn't running — use `./run.sh` (both servers) |
+| `Cannot reach Ollama` | `ollama serve` in another terminal |
+| `Model … is not installed` | `ollama pull <model>` (see `.env`) |
+| `no such table` | `python scripts/setup_db.py` |
+| Answers take ~1 min | Normal for local CPU models — UI stays responsive meanwhile |
+| `No module named …` | `./.venv/bin/pip install -r requirements.txt` |
 
-### Local Ollama on macOS
+---
 
-1. Install Ollama from [ollama.com/download](https://ollama.com/download).
-2. Start it with `ollama serve` if the app is not already running.
-3. Download the model configured in `.env`, for example `ollama pull llama3.2`.
-4. Run the backend and frontend using the commands above. Check `http://localhost:8000/llm/health` before asking a question.
-
-## Testing
-
-```bash
-pytest tests/ -v
-```
-
-## Project structure
+## 🗂️ Project structure
 
 ```
-ai-database-agent/
-├── backend/                   # FastAPI serving layer (Milestone 6, original Phase 23)
-│   ├── main.py
-│   └── pyproject.toml
-├── frontend/react-app/        # React + Vite + Tailwind chat UI (Milestone 6, original Phase 23b)
+├── backend/main.py              # FastAPI: ask, schema, upload, SQL editor, sessions
+├── frontend/react-app/src/      # React 19 + Tailwind v4 liquid-glass UI
 ├── src/ai_database_agent/
-│   ├── config/                # Settings (Phase 1)
-│   ├── database/               # Connection, inspector, schema models (Phase 1)
-│   ├── observability/          # Tracing bootstrap (Phase 1)
-│   ├── schema/                  # Schema representation + linking (Phase 2+, Milestone 4)
-│   ├── llm/                       # LLM client, SQL + answer generation (Milestone 1+)
-│   ├── agent/                     # Pipeline / orchestration (Milestone 1+)
-│   ├── memory/                    # Conversation memory (Milestone 5, original Phase 10)
-│   └── evaluation/                 # Eval dataset + harness (Milestone 2+, pulls Phase 18 forward)
-├── tests/
-├── scripts/
-├── vercel.json                # experimentalServices wiring backend + frontend
-└── main.py
+│   ├── agent/       # pipeline + cooperative cancellation
+│   ├── llm/         # client, SQL/answer generation, intent gate
+│   ├── database/    # connection, validator, executor, registry, CSV/Excel ingestion
+│   ├── schema/      # lightweight schema linking + value grounding
+│   ├── memory/      # 5-turn conversation window
+│   ├── storage/     # SQLite persistence across restarts
+│   └── evaluation/  # held-out dataset + execution-accuracy harness
+├── scripts/  run.sh  main.py    # eval, setup, entry points
+└── tests/                       # 101 tests, all offline
 ```
+
+<div align="center">
+
+Built with 🔴 for people who don't trust black boxes — **every answer shows its SQL.**
+
+</div>

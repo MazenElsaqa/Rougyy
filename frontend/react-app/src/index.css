@@ -150,7 +150,21 @@ textarea {
   animation: bg-drift-b 58s ease-in-out infinite;
 }
 
-/* --- Liquid glass surfaces (light theme) --- */
+/* --- Tour spotlight: the focused thing looks LIT (light on it),
+   every other region dims itself. NOTE: no position/z-index here on
+   purpose -- this class is also applied to absolutely-positioned
+   panels (the dock) and overriding their position would rip them out
+   of place. Stacking is handled per-element where the class is used. --- */
+.tour-lit {
+  z-index: 50;
+  filter: brightness(1.22) saturate(1.12) drop-shadow(0 0 30px rgba(229, 50, 58, 0.5));
+  transition: filter 0.3s ease;
+}
+
+.tour-dim {
+  filter: brightness(0.42) saturate(0.7);
+  transition: filter 0.3s ease;
+}
 .glass {
   background: color-mix(in srgb, #ffffff 68%, transparent);
   backdrop-filter: blur(22px) saturate(1.4);

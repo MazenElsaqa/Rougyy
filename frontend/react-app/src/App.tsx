@@ -10,8 +10,9 @@ import { HeaderMenu } from "./components/HeaderMenu"
 import { CatCompanion, type Mood } from "./components/CatCompanion"
 import { SchemaSidebar } from "./components/SchemaSidebar"
 import { SqlEditor } from "./components/SqlEditor"
+import { Tour } from "./components/tour/Tour"
+import { TOUR_STEPS, type TourSpot } from "./components/tour/steps"
 import { Typewriter } from "./components/Typewriter"
-import { UserGuide, type GuideStep } from "./components/UserGuide"
 import { askQuestion, cancelAsk, fetchDatabases, fetchSchema, resetSession, uploadDatabase } from "./lib/api"
 import { applyTheme, loadTheme, type Theme } from "./lib/theme"
 import {
@@ -25,15 +26,6 @@ const SUGGESTIONS = [
   "How many singers are there?",
   "Which singers are from France?",
   "How many concerts were held at each stadium?",
-]
-
-const GUIDE_STEPS: GuideStep[] = [
-  { target: "database-menu", title: "Choose your data", description: "Start by opening the database menu to see the available databases.", action: "Use All databases to search everything, or select one database for a focused answer." },
-  { target: "database-menu", title: "Add your own database", description: "Bring your own SQLite, CSV, or spreadsheet into DIDA.", action: "Open the database menu, choose Add your own database, then select a supported file." },
-  { target: "question-composer", title: "Ask in plain English", description: "Tell DIDA what you want to learn without writing SQL yourself.", action: "Type a question or choose one of the suggested questions below the composer." },
-  { target: "chat-history", title: "Keep your conversations", description: "Every question and answer is grouped into a chat you can revisit.", action: "Open Chat history to switch between chats, start a new one, or delete an old one." },
-  { target: "schema-menu", title: "Explore the schema", description: "See the tables and columns available in the selected database.", action: "Open Database schema whenever you need context before asking a question." },
-  { target: "sql-menu", title: "Use SQL directly", description: "For advanced users, the SQL editor lets you run read-only queries directly.", action: "Open SQL editor, choose a table, write your query, and run it when ready." },
 ]
 
 type OpenMenu = null | "db" | "sql" | "chats" | "schema"
@@ -70,7 +62,7 @@ export default function App() {
   })
   const [activeId, setActiveId] = useState<string>(() => loadSessions()[0]?.id ?? "")
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
-  const [guideOpen, setGuideOpen] = useState(false)
+  const [tour, setTour] = useState<number | null>(null)
   const [catSide, setCatSide] = useState<"left" | "right">(() => {
     try {
       return window.localStorage.getItem("rougyy.catSide") === "left" ? "left" : "right"
@@ -143,6 +135,29 @@ export default function App() {
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
+
+  // Guided tour: each step auto-opens its menu; closing the tour
+  // restores the previous state.
+  useEffect(() => {
+    if (tour === null) return
+    setOpenMenu(TOUR_STEPS[tour].openMenu)
+  }, [tour])
+
+  function closeTour() {
+    setTour(null)
+    setOpenMenu(null)
+  }
+
+  const spot = tour === null ? null : TOUR_STEPS[tour].spot
+  // Header + icons follow what is ACTUALLY open (the user may switch
+  // menus mid-tour): only the open feature lights up, the rest dim.
+  const headerUp = tour !== null && (spot === "navbar" || openMenu !== null)
+  const iconDimmed = (menu: OpenMenu) => headerUp && openMenu !== menu && spot !== "navbar"
+  // Region dimming: while touring, every region dims itself unless it
+  // is the focused one. (A global overlay can't do this job: header /
+  // content / dock each paint in stacking contexts below it, so it
+  // would bury the spotlight too.)
+  const lit = (region: TourSpot) => (spot === region ? "tour-lit" : "")
 
   useEffect(() => {
     if (!openMenu) return
@@ -287,6 +302,7 @@ export default function App() {
       <AnimatedBackground />
 
       <div className="absolute left-4 top-4 z-20 select-none">
+        <div>
         <span className="text-2xl font-extrabold tracking-tight text-foreground">
           dida<span className="text-primary">.</span>
         </span>
@@ -300,13 +316,20 @@ export default function App() {
             className="bg-gradient-to-r from-primary to-[#ff7a59] bg-clip-text font-hand text-5xl font-bold leading-[1.05]"
           />
         </div>
+        </div>
       </div>
 
-      <header className="glass-nav relative z-20 mx-auto mt-3 flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full px-4 py-2.5">
+      <header
+        className={`glass-nav relative mx-auto mt-3 flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full px-4 py-2.5 ${
+          headerUp ? "z-50" : "z-20"
+        }`}
+      >
         <div data-guide-target="database-menu">
         <HeaderMenu
           label={`Database: ${selectedDbIds === null ? "all databases" : databases?.find((d) => d.id === selectedDbIds[0])?.name ?? "select"}`}
           active={openMenu === "db"}
+          spotlit={openMenu === "db"}
+          dimmed={iconDimmed("db")}
           onToggle={() => toggleMenu("db")}
           glow
           icon={
@@ -327,6 +350,8 @@ export default function App() {
         <HeaderMenu
           label="SQL editor"
           active={openMenu === "sql"}
+          spotlit={openMenu === "sql"}
+          dimmed={iconDimmed("sql")}
           onToggle={() => toggleMenu("sql")}
           icon={
             <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
@@ -346,6 +371,8 @@ export default function App() {
         <HeaderMenu
           label="Chat history"
           active={openMenu === "chats"}
+          spotlit={openMenu === "chats"}
+          dimmed={iconDimmed("chats")}
           onToggle={() => toggleMenu("chats")}
           icon={
             <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
@@ -365,6 +392,8 @@ export default function App() {
         <HeaderMenu
           label="Database schema"
           active={openMenu === "schema"}
+          spotlit={openMenu === "schema"}
+          dimmed={iconDimmed("schema")}
           onToggle={() => toggleMenu("schema")}
           icon={
             <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
@@ -376,18 +405,37 @@ export default function App() {
         </div>
         <button
           type="button"
-          onClick={() => setGuideOpen(true)}
-          aria-label="Open user guide"
-          title="User guide"
-          className="rounded-full p-2.5 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+          onClick={(event) => {
+            setTour(0)
+            event.currentTarget.blur()
+          }}
+          aria-label="User manual tour"
+          title="User manual tour"
+          className={`rounded-full p-3 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10 ${
+            headerUp ? "opacity-40 saturate-50" : ""
+          }`}
         >
-          <span className="flex size-7 items-center justify-center rounded-full border border-current text-sm font-bold">?</span>
+          <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
+            <path
+              d="M10 5.5C8 4.5 5.8 4.5 4 5.5v9c1.8-1 4-1 6 0 2-1 4.2-1 6 0v-9c-1.8-1-4-1-6 0Zm0 0v9"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
         <button
           type="button"
           onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          className="rounded-full p-2.5 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+          className={`rounded-full p-2.5 text-muted transition-all hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10 ${
+            spot === "navbar"
+              ? "scale-125 bg-primary-muted text-primary shadow-[0_0_22px_rgba(215,25,33,0.55)]"
+              : headerUp
+                ? "opacity-40 saturate-50"
+                : ""
+          }`}
         >
           {theme === "dark" ? (
             <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
@@ -415,7 +463,9 @@ export default function App() {
           onClick={handleNewChat}
           aria-label="New chat"
           title="New chat"
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md shadow-primary/30 transition-all hover:shadow-lg hover:brightness-110"
+          className={`flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md shadow-primary/30 transition-all hover:shadow-lg hover:brightness-110 ${
+            headerUp ? "opacity-40 saturate-50" : ""
+          }`}
         >
           <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
             <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -425,7 +475,9 @@ export default function App() {
 
       {openMenu && (
         <div
-          className="glass-strong absolute bottom-3 right-3 top-[84px] z-30 flex w-[340px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl"
+          className={`glass-strong absolute bottom-3 right-3 top-[84px] flex w-[340px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl ${
+            tour !== null ? "tour-lit" : "z-30"
+          }`}
           role="dialog"
           aria-label={openMenu === "db" ? "Databases" : openMenu === "chats" ? "Chat history" : "Database schema"}
         >
@@ -536,21 +588,34 @@ export default function App() {
         </div>
       )}
 
-      <div className="relative z-10 flex min-h-0 flex-1 p-3">
+      <div
+        className={`relative flex min-h-0 flex-1 p-3 ${
+          spot === "composer" || spot === "messages" ? "z-50" : "z-10"
+        }`}
+      >
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {entries.length === 0 ? (
             <div className="flex flex-1 flex-col px-4 pb-10 pt-6">
               <div className="flex flex-1 flex-col items-center justify-center">
                 <div className="w-full max-w-2xl text-center">
-                  <AnimatedTitle text="What do you want to know?" />
-                  <p className="mx-auto mt-2 max-w-md text-[13.5px] leading-relaxed text-muted">
-                    Ask in plain English — DIDA writes the SQL, runs it read-only, and answers from
-                    real rows.
-                  </p>
-                <div className="mt-6" data-guide-target="question-composer">
+                  <div className={tour !== null && spot !== null && spot !== "composer" ? "tour-dim" : ""}>
+                    <AnimatedTitle text="What do you want to know?" />
+                    <p className="mx-auto mt-2 max-w-md text-[13.5px] leading-relaxed text-muted">
+                      Ask in plain English — DIDA writes the SQL, runs it read-only, and answers from
+                      real rows.
+                    </p>
+                  </div>
+                <div
+                  className={`mt-6 ${lit("composer")}`}
+                  data-guide-target="question-composer"
+                >
                   <Composer onSubmit={handleAsk} disabled={isAsking} large autoFocus />
                 </div>
-                <div className="mt-4 flex max-w-full flex-wrap justify-center gap-2">
+                <div
+                  className={`mt-4 flex max-w-full flex-wrap justify-center gap-2 ${
+                    tour !== null && spot !== null && spot !== "composer" ? "tour-dim" : ""
+                  }`}
+                >
                   {SUGGESTIONS.map((suggestion) => (
                     <button
                       key={suggestion}
@@ -569,14 +634,20 @@ export default function App() {
           ) : (
             <>
               <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
-                <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+                <div
+                  className={`mx-auto flex w-full max-w-2xl flex-col gap-5 ${lit("messages")} ${
+                    tour !== null && spot !== null && spot !== "messages" ? "tour-dim" : ""
+                  }`}
+                >
                   {entries.map((entry) => (
                     <ChatMessage key={entry.id} entry={entry} onCancel={handleCancel} />
                   ))}
                 </div>
               </div>
               <div className="px-4 pb-4">
-                <Composer onSubmit={handleAsk} disabled={isAsking} />
+                <div className={lit("composer")}>
+                  <Composer onSubmit={handleAsk} disabled={isAsking} />
+                </div>
               </div>
             </>
           )}
@@ -584,7 +655,9 @@ export default function App() {
       </div>
 
       <div
-        className={`pointer-events-none fixed z-40 ${
+        className={`pointer-events-none fixed ${
+          spot === "cat" ? "z-50" : "z-40"
+        } ${
           catPos ? "" : `bottom-5 md:bottom-6 ${catSide === "right" ? "right-5 md:right-6" : "left-5 md:left-6"}`
         }`}
         style={catPos ? { left: catPos.x, top: catPos.y } : undefined}
@@ -642,13 +715,21 @@ export default function App() {
               moveCatToOtherCorner()
             }
           }}
-          className="pointer-events-auto touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className={`pointer-events-auto touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary ${lit("cat")}`}
         >
           <CatCompanion mood={moodForEntries(entries)} className="h-24 w-auto md:h-32" />
         </div>
       </div>
 
-      <UserGuide open={guideOpen} onClose={() => setGuideOpen(false)} steps={GUIDE_STEPS} />
+      {tour !== null && (
+        <>
+          <div
+            className="pointer-events-none fixed inset-0 z-40 bg-black/65 backdrop-blur-[2px] dark:bg-black/80"
+            aria-hidden="true"
+          />
+          <Tour index={tour} onGo={setTour} onClose={closeTour} />
+        </>
+      )}
     </div>
   )
 }
