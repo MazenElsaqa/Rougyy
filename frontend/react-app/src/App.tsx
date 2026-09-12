@@ -11,6 +11,7 @@ import { CatCompanion, type Mood } from "./components/CatCompanion"
 import { SchemaSidebar } from "./components/SchemaSidebar"
 import { SqlEditor } from "./components/SqlEditor"
 import { Typewriter } from "./components/Typewriter"
+import { UserGuide, type GuideStep } from "./components/UserGuide"
 import { askQuestion, cancelAsk, fetchDatabases, fetchSchema, resetSession, uploadDatabase } from "./lib/api"
 import { applyTheme, loadTheme, type Theme } from "./lib/theme"
 import {
@@ -24,6 +25,15 @@ const SUGGESTIONS = [
   "How many singers are there?",
   "Which singers are from France?",
   "How many concerts were held at each stadium?",
+]
+
+const GUIDE_STEPS: GuideStep[] = [
+  { target: "database-menu", title: "Choose your data", description: "Start by opening the database menu to see the available databases.", action: "Use All databases to search everything, or select one database for a focused answer." },
+  { target: "database-menu", title: "Add your own database", description: "Bring your own SQLite, CSV, or spreadsheet into DIDA.", action: "Open the database menu, choose Add your own database, then select a supported file." },
+  { target: "question-composer", title: "Ask in plain English", description: "Tell DIDA what you want to learn without writing SQL yourself.", action: "Type a question or choose one of the suggested questions below the composer." },
+  { target: "chat-history", title: "Keep your conversations", description: "Every question and answer is grouped into a chat you can revisit.", action: "Open Chat history to switch between chats, start a new one, or delete an old one." },
+  { target: "schema-menu", title: "Explore the schema", description: "See the tables and columns available in the selected database.", action: "Open Database schema whenever you need context before asking a question." },
+  { target: "sql-menu", title: "Use SQL directly", description: "For advanced users, the SQL editor lets you run read-only queries directly.", action: "Open SQL editor, choose a table, write your query, and run it when ready." },
 ]
 
 type OpenMenu = null | "db" | "sql" | "chats" | "schema"
@@ -60,6 +70,7 @@ export default function App() {
   })
   const [activeId, setActiveId] = useState<string>(() => loadSessions()[0]?.id ?? "")
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
+  const [guideOpen, setGuideOpen] = useState(false)
   const [catSide, setCatSide] = useState<"left" | "right">(() => {
     try {
       return window.localStorage.getItem("rougyy.catSide") === "left" ? "left" : "right"
@@ -292,6 +303,7 @@ export default function App() {
       </div>
 
       <header className="glass-nav relative z-20 mx-auto mt-3 flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full px-4 py-2.5">
+        <div data-guide-target="database-menu">
         <HeaderMenu
           label={`Database: ${selectedDbIds === null ? "all databases" : databases?.find((d) => d.id === selectedDbIds[0])?.name ?? "select"}`}
           active={openMenu === "db"}
@@ -309,7 +321,9 @@ export default function App() {
             </svg>
           }
         />
+        </div>
 
+        <div data-guide-target="sql-menu">
         <HeaderMenu
           label="SQL editor"
           active={openMenu === "sql"}
@@ -326,7 +340,9 @@ export default function App() {
             </svg>
           }
         />
+        </div>
 
+        <div data-guide-target="chat-history">
         <HeaderMenu
           label="Chat history"
           active={openMenu === "chats"}
@@ -343,7 +359,9 @@ export default function App() {
             </svg>
           }
         />
+        </div>
 
+        <div data-guide-target="schema-menu">
         <HeaderMenu
           label="Database schema"
           active={openMenu === "schema"}
@@ -355,6 +373,16 @@ export default function App() {
             </svg>
           }
         />
+        </div>
+        <button
+          type="button"
+          onClick={() => setGuideOpen(true)}
+          aria-label="Open user guide"
+          title="User guide"
+          className="rounded-full p-2.5 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+        >
+          <span className="flex size-7 items-center justify-center rounded-full border border-current text-sm font-bold">?</span>
+        </button>
         <button
           type="button"
           onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
@@ -519,7 +547,7 @@ export default function App() {
                     Ask in plain English — DIDA writes the SQL, runs it read-only, and answers from
                     real rows.
                   </p>
-                <div className="mt-6">
+                <div className="mt-6" data-guide-target="question-composer">
                   <Composer onSubmit={handleAsk} disabled={isAsking} large autoFocus />
                 </div>
                 <div className="mt-4 flex max-w-full flex-wrap justify-center gap-2">
@@ -619,6 +647,8 @@ export default function App() {
           <CatCompanion mood={moodForEntries(entries)} className="h-24 w-auto md:h-32" />
         </div>
       </div>
+
+      <UserGuide open={guideOpen} onClose={() => setGuideOpen(false)} steps={GUIDE_STEPS} />
     </div>
   )
 }
