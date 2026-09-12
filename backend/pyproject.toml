@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.110",
     "python-multipart>=0.0.18",
+    "openpyxl>=3.1",
     # --- mirrors requirements.txt at the repo root: the pipeline this
     # service imports (via sys.path, see main.py) needs these too,
     # since this service builds its own isolated environment from

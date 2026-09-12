@@ -118,7 +118,7 @@ export function Composer({ onSubmit, disabled, large = false, autoFocus = false 
           disabled={disabled}
           autoFocus={autoFocus}
           className={`max-h-36 min-h-[42px] flex-1 resize-none overflow-y-auto bg-transparent leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60 ${
-            large ? "py-3 text-[15px]" : "py-2.5 text-sm"
+            large ? "py-3 text-base" : "py-2.5 text-[15px]"
           }`}
         />
         <button

@@ -102,18 +102,32 @@ export interface DatabaseListResponse {
 /** Milestone 8: null/undefined means "all databases at once". */
 export type DatabaseSelection = string[] | null
 
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  const onExternalAbort = () => controller.abort()
+  if (externalSignal?.aborted) controller.abort()
+  else externalSignal?.addEventListener("abort", onExternalAbort)
   try {
     return await fetch(url, { ...options, signal: controller.signal })
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
+      if (!timedOut) throw error // user-cancelled: the caller reports "Cancelled."
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s — is the backend running?`)
     }
     throw new Error(`Cannot reach the backend (${url}) — is it running on port 8000? Run ./run.sh`)
   } finally {
     clearTimeout(timer)
+    externalSignal?.removeEventListener("abort", onExternalAbort)
   }
 }
 
@@ -136,6 +150,7 @@ export async function askQuestion(
   question: string,
   sessionId: string,
   databaseIds?: DatabaseSelection,
+  signal?: AbortSignal,
 ): Promise<AskResponse> {
   const response = await fetchWithTimeout(
     `${API_BASE}/ask`,
@@ -145,6 +160,7 @@ export async function askQuestion(
       body: JSON.stringify({ question, session_id: sessionId, database_ids: databaseIds ?? null }),
     },
     ASK_TIMEOUT_MS,
+    signal,
   )
   return parseOrThrow<AskResponse>(response)
 }

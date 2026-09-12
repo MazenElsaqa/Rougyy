@@ -43,6 +43,7 @@ from pydantic import BaseModel
 
 from ai_database_agent.agent.pipeline import AgentPipeline
 from ai_database_agent.database.inspector import DatabaseInspector
+from ai_database_agent.database.ingestion import IngestionError, ingest_tabular_upload
 from ai_database_agent.database.registry import (
     DEFAULT_DB_ID,
     DatabaseRegistry,
@@ -73,7 +74,7 @@ async def _lifespan(_: fastapi.FastAPI):
     yield
 
 
-app = fastapi.FastAPI(title="Rougyy Agent API", lifespan=_lifespan)
+app = fastapi.FastAPI(title="DIDA Agent API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -315,38 +316,72 @@ def list_databases() -> DatabaseListResponse:
     )
 
 
+# Upload guard: one giant file must not be able to fill the disk.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
 @app.post("/databases/upload", response_model=DatabaseOut)
 async def upload_database(file: fastapi.UploadFile = fastapi.File(...)) -> DatabaseOut:
-    """Milestone 7: let a user add their own SQLite database file.
+    """Milestone 7: let a user add their own database file.
 
-    The file is streamed to a temp path, handed to the registry for
-    validation (must actually open as SQLite) and permanent storage
-    under data/uploads/, then registered so /schema, /schema/tables,
-    and /ask can all target it by db_id immediately.
+    Native SQLite (.sqlite/.sqlite3/.db) is registered directly.
+    Tabular files (.csv/.xls/.xlsx) are first converted to SQLite
+    (one table per file/sheet, see database/ingestion.py) into a
+    second temp file, which then flows through the exact same
+    registry validation as a native upload.
+
+    The registered file lands under data/uploads/, so /schema,
+    /schema/tables, and /ask can all target it by db_id immediately.
     """
     if not file.filename:
         raise fastapi.HTTPException(status_code=400, detail="No file provided")
 
     suffix = Path(file.filename).suffix.lower()
-    if suffix not in (".sqlite", ".sqlite3", ".db"):
+    if suffix not in (".sqlite", ".sqlite3", ".db", ".csv", ".xls", ".xlsx"):
         raise fastapi.HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{suffix}'. Upload a .sqlite, .sqlite3, or .db file.",
+            detail=f"Unsupported file type '{suffix}'. Upload .sqlite, .db, .csv, .xls, or .xlsx.",
         )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         contents = await file.read()
+        if len(contents) > MAX_UPLOAD_BYTES:
+            raise fastapi.HTTPException(
+                status_code=413,
+                detail=f"File is too large ({len(contents) // (1024 * 1024)}MB). Limit is {MAX_UPLOAD_BYTES // (1024 * 1024)}MB.",
+            )
         tmp.write(contents)
         tmp_path = Path(tmp.name)
 
+    converted_path: Path | None = None
     try:
         display_name = Path(file.filename).stem
-        entry = _registry.add_sqlite_upload(tmp_path, display_name)
+        if suffix in (".csv", ".xls", ".xlsx"):
+            # Tabular upload: convert to SQLite first, then register
+            # exactly like a native file (same validation, same storage).
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite") as converted:
+                converted_path = Path(converted.name)
+            try:
+                imported = ingest_tabular_upload(tmp_path, display_name, converted_path)
+            except IngestionError as exc:
+                raise fastapi.HTTPException(status_code=400, detail=str(exc)) from exc
+            _log.info(
+                "databases.upload.converted",
+                extra={
+                    "upload_filename": file.filename,
+                    "tables": ",".join(t.name for t in imported),
+                },
+            )
+            entry = _registry.add_sqlite_upload(converted_path, display_name)
+        else:
+            entry = _registry.add_sqlite_upload(tmp_path, display_name)
     except InvalidDatabaseFileError as exc:
         _log.warning("databases.upload.rejected", extra={"upload_filename": file.filename, "error": str(exc)})
         raise fastapi.HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         tmp_path.unlink(missing_ok=True)
+        if converted_path is not None:
+            converted_path.unlink(missing_ok=True)
 
     _log.info("databases.upload.success", extra={"db_id": entry.id, "upload_filename": file.filename})
     return DatabaseOut(id=entry.id, name=entry.name, dialect=entry.dialect, is_default=entry.is_default)

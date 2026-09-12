@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import useSWR from "swr"
 import { AnimatedBackground } from "./components/AnimatedBackground"
 import { AnimatedTitle } from "./components/AnimatedTitle"
 import { ChatHistoryList } from "./components/ChatHistoryList"
-import { ChatMessage } from "./components/ChatMessage"
+import { ChatMessage, type ChatEntry } from "./components/ChatMessage"
 import { Composer } from "./components/Composer"
-import { DatabaseSelector } from "./components/DatabaseSelector"
-import { LogoMark } from "./components/Logo"
+import { DatabaseMenu } from "./components/DatabaseMenu"
+import { HeaderMenu } from "./components/HeaderMenu"
+import { CatCompanion, type Mood } from "./components/CatCompanion"
 import { SchemaSidebar } from "./components/SchemaSidebar"
+import { Typewriter } from "./components/Typewriter"
 import { askQuestion, fetchDatabases, fetchSchema, resetSession, uploadDatabase } from "./lib/api"
 import { applyTheme, loadTheme, type Theme } from "./lib/theme"
 import {
@@ -17,17 +19,13 @@ import {
   type ChatSession,
 } from "./lib/chatHistory"
 
-const WIDTH_STORAGE_KEY = "rougyy.sidebarWidth"
-const COLLAPSED_STORAGE_KEY = "rougyy.sidebarCollapsed"
-const MIN_SIDEBAR_WIDTH = 240
-const MAX_SIDEBAR_WIDTH = 460
-const DEFAULT_SIDEBAR_WIDTH = 300
-
 const SUGGESTIONS = [
   "How many singers are there?",
   "Which singers are from France?",
   "How many concerts were held at each stadium?",
 ]
+
+type OpenMenu = null | "db" | "chats" | "schema"
 
 function createSessionId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -35,27 +33,23 @@ function createSessionId() {
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-function loadNumber(key: string, fallback: number): number {
-  try {
-    const raw = window.localStorage.getItem(key)
-    const parsed = raw ? Number(raw) : NaN
-    return Number.isFinite(parsed) ? parsed : fallback
-  } catch {
-    return fallback
-  }
-}
-
-function loadCollapsed(): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSED_STORAGE_KEY) === "1"
-  } catch {
-    return false
-  }
-}
-
 function newSession(): ChatSession {
   const id = createSessionId()
   return { id, title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), entries: [], dbIds: null }
+}
+
+/**
+ * DIDA's mood for the brand face: excited while working, sad when the
+ * last turn failed or was cancelled, happy after lots of successful
+ * answers, neutral otherwise.
+ */
+function moodForEntries(entries: ChatEntry[]): Mood {
+  if (entries.some((entry) => entry.pending)) return "happy"
+  const done = entries.filter((entry) => entry.response || entry.clientError)
+  if (done.length === 0) return "normal"
+  const last = done[done.length - 1]
+  if (last.clientError) return "sad"
+  return done.filter((entry) => entry.response && !entry.response.error).length >= 3 ? "happy" : "normal"
 }
 
 export default function App() {
@@ -64,16 +58,12 @@ export default function App() {
     return stored.length > 0 ? stored : [newSession()]
   })
   const [activeId, setActiveId] = useState<string>(() => loadSessions()[0]?.id ?? "")
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(loadCollapsed)
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [theme, setTheme] = useState<Theme>(loadTheme)
-  const [sidebarWidth, setSidebarWidth] = useState(() =>
-    Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, loadNumber(WIDTH_STORAGE_KEY, DEFAULT_SIDEBAR_WIDTH))),
-  )
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const resizingRef = useRef(false)
+  const pendingControllers = useRef(new Map<string, AbortController>())
 
   // Keep the active session valid if the list changes underneath it.
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? sessions[0], [sessions, activeId])
@@ -88,6 +78,15 @@ export default function App() {
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
+
+  useEffect(() => {
+    if (!openMenu) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpenMenu(null)
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [openMenu])
 
   const { data: databases, mutate: refreshDatabases } = useSWR("databases", () =>
     fetchDatabases().then((r) => r.databases),
@@ -118,14 +117,15 @@ export default function App() {
     const target = active
     if (!target) return
     const entryId = createSessionId()
+    const controller = new AbortController()
+    pendingControllers.current.set(entryId, controller)
     updateSession(target.id, (s) => ({
       ...s,
       entries: [...s.entries, { id: entryId, question, response: null, pending: true, clientError: null }],
     }))
-    setDrawerOpen(false)
 
     try {
-      const response = await askQuestion(question, target.id, target.dbIds)
+      const response = await askQuestion(question, target.id, target.dbIds, controller.signal)
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== target.id) return s
@@ -136,6 +136,7 @@ export default function App() {
         }),
       )
     } catch (error) {
+      const cancelled = controller.signal.aborted
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== target.id) return s
@@ -143,14 +144,28 @@ export default function App() {
             ...s,
             entries: s.entries.map((entry) =>
               entry.id === entryId
-                ? { ...entry, pending: false, clientError: error instanceof Error ? error.message : String(error) }
+                ? {
+                    ...entry,
+                    pending: false,
+                    clientError: cancelled
+                      ? "Cancelled."
+                      : error instanceof Error
+                        ? error.message
+                        : String(error),
+                  }
                 : entry,
             ),
             updatedAt: Date.now(),
           }
         }),
       )
+    } finally {
+      pendingControllers.current.delete(entryId)
     }
+  }
+
+  function handleCancel(entryId: string) {
+    pendingControllers.current.get(entryId)?.abort()
   }
 
   async function handleUpload(file: File) {
@@ -171,12 +186,12 @@ export default function App() {
     const session = newSession()
     setSessions((prev) => [session, ...prev])
     setActiveId(session.id)
-    setDrawerOpen(false)
+    setOpenMenu(null)
   }
 
   function handleSelectSession(id: string) {
     setActiveId(id)
-    setDrawerOpen(false)
+    setOpenMenu(null)
   }
 
   function handleDeleteSession(id: string) {
@@ -193,84 +208,85 @@ export default function App() {
     })
   }
 
-  function handleToggleSidebar() {
-    if (window.matchMedia("(max-width: 767px)").matches) {
-      setDrawerOpen((open) => !open)
-    } else {
-      setCollapsed((prev) => {
-        try {
-          window.localStorage.setItem(COLLAPSED_STORAGE_KEY, prev ? "0" : "1")
-        } catch {
-          // ignore
-        }
-        return !prev
-      })
-    }
+  function toggleMenu(menu: Exclude<OpenMenu, null>) {
+    setOpenMenu((prev) => (prev === menu ? null : menu))
   }
-
-  function handleResizeStart(event: ReactMouseEvent) {
-    event.preventDefault()
-    resizingRef.current = true
-    const startX = event.clientX
-    const startWidth = sidebarWidth
-
-    function handleMove(moveEvent: MouseEvent) {
-      if (!resizingRef.current) return
-      const next = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + moveEvent.clientX - startX))
-      setSidebarWidth(next)
-    }
-    function handleUp() {
-      resizingRef.current = false
-      try {
-        window.localStorage.setItem(WIDTH_STORAGE_KEY, String(sidebarWidthRef.current))
-      } catch {
-        // ignore
-      }
-      window.removeEventListener("mousemove", handleMove)
-      window.removeEventListener("mouseup", handleUp)
-    }
-    window.addEventListener("mousemove", handleMove)
-    window.addEventListener("mouseup", handleUp)
-  }
-
-  const sidebarWidthRef = useRef(sidebarWidth)
-  sidebarWidthRef.current = sidebarWidth
-
-  const sidebarStyle = useMemo(() => ({ "--sidebar-w": `${sidebarWidth}px` }) as CSSProperties, [sidebarWidth])
 
   return (
     <div className="relative flex h-screen flex-col bg-background text-foreground">
       <AnimatedBackground />
 
-      <header className="glass relative z-20 mx-3 mt-3 flex items-center gap-2 rounded-2xl px-3 py-2.5">
-        <button
-          type="button"
-          onClick={handleToggleSidebar}
-          aria-label="Toggle sidebar"
-          className="rounded-xl p-2 text-muted transition-colors hover:bg-black/5 hover:text-foreground"
-        >
-          <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5" aria-hidden="true">
-            <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M8 3.5v13" stroke="currentColor" strokeWidth="1.5" />
-          </svg>
-        </button>
-        <div className="flex min-w-0 items-center gap-2.5">
-          <LogoMark />
-          <h1 className="min-w-0 truncate font-mono text-sm font-semibold tracking-tight text-foreground">
-            rougyy
-            <span className="ml-2 hidden truncate font-sans text-[11px] font-normal text-muted sm:inline">
-              {active ? active.title : "Ask your database, in plain English"}
-            </span>
-          </h1>
+      <div className="absolute left-4 top-4 z-20 select-none">
+        <span className="text-2xl font-extrabold tracking-tight text-foreground">
+          dida<span className="text-primary">.</span>
+        </span>
+        <div className="mt-1 hidden min-[500px]:block">
+          <Typewriter
+            lines={["heyy", "zeinn.."]}
+            speed={130}
+            deleteSpeed={45}
+            holdMs={2400}
+            loop
+            className="bg-gradient-to-r from-primary to-[#ff7a59] bg-clip-text font-hand text-5xl font-bold leading-[1.05]"
+          />
         </div>
+      </div>
+
+      <header className="glass-nav relative z-20 mx-auto mt-3 flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full px-4 py-2.5">
+        <HeaderMenu
+          label={`Database: ${selectedDbIds === null ? "all databases" : databases?.find((d) => d.id === selectedDbIds[0])?.name ?? "select"}`}
+          active={openMenu === "db"}
+          onToggle={() => toggleMenu("db")}
+          glow
+          icon={
+            <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
+              <ellipse cx="10" cy="5" rx="6" ry="2.2" stroke="currentColor" strokeWidth="1.5" />
+              <path
+                d="M4 5v5c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2V5M4 10v5c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2v-5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          }
+        />
+
+        <HeaderMenu
+          label="Chat history"
+          active={openMenu === "chats"}
+          onToggle={() => toggleMenu("chats")}
+          icon={
+            <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
+              <path
+                d="M3.5 5.5h13v8h-8l-3.5 3v-3H3.5v-8Z"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+              <path d="M7 8.5h6M7 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          }
+        />
+
+        <HeaderMenu
+          label="Database schema"
+          active={openMenu === "schema"}
+          onToggle={() => toggleMenu("schema")}
+          icon={
+            <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
+              <rect x="3" y="4" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M3 8h14M8 8v8" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          }
+        />
         <button
           type="button"
           onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          className="rounded-xl p-2 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+          className="rounded-full p-2.5 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
         >
           {theme === "dark" ? (
-            <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
               <circle cx="10" cy="10" r="3.5" stroke="currentColor" strokeWidth="1.5" />
               <path
                 d="M10 2.5v1.8M10 15.7v1.8M2.5 10h1.8M15.7 10h1.8M4.7 4.7l1.3 1.3M14 14l1.3 1.3M15.3 4.7 14 6M6 14l-1.3 1.3"
@@ -280,7 +296,7 @@ export default function App() {
               />
             </svg>
           ) : (
-            <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
               <path
                 d="M16.5 12.5A7 7 0 0 1 7.5 3.5a7 7 0 1 0 9 9Z"
                 stroke="currentColor"
@@ -293,106 +309,104 @@ export default function App() {
         <button
           type="button"
           onClick={handleNewChat}
-          className="flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[13px] font-medium text-primary-foreground shadow-md shadow-primary/30 transition-all hover:shadow-lg hover:brightness-110"
+          aria-label="New chat"
+          title="New chat"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md shadow-primary/30 transition-all hover:shadow-lg hover:brightness-110"
         >
-          <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
             <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
-          <span className="hidden sm:inline">New chat</span>
         </button>
       </header>
 
-      <div className="relative z-10 flex min-h-0 flex-1 gap-3 p-3">
-        {drawerOpen && (
-          <button
-            type="button"
-            aria-label="Close sidebar"
-            onClick={() => setDrawerOpen(false)}
-            className="fixed inset-0 z-20 bg-black/40 md:hidden"
-          />
-        )}
-
-        <aside
-          style={sidebarStyle}
-          className={`glass fixed inset-y-0 left-0 top-0 z-30 flex h-full shrink-0 flex-col overflow-hidden rounded-2xl transition-[width,transform] duration-200 ease-out md:static md:z-10 max-md:rounded-none max-md:border-0 max-md:pt-[76px] ${
-            drawerOpen ? "translate-x-0" : "-translate-x-full"
-          } w-[300px] md:w-[var(--sidebar-w)] md:translate-x-0 ${
-            collapsed ? "md:w-0 md:border-0" : ""
-          }`}
-          aria-label="Sidebar"
-          aria-hidden={collapsed}
-          inert={collapsed}
+      {openMenu && (
+        <div
+          className="glass-strong absolute bottom-3 right-3 top-[84px] z-30 flex w-[340px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl"
+          role="dialog"
+          aria-label={openMenu === "db" ? "Databases" : openMenu === "chats" ? "Chat history" : "Database schema"}
         >
-          <div className="flex h-full w-[300px] flex-col md:w-[var(--sidebar-w)]">
-            <div className="flex-1 space-y-4 overflow-y-auto px-2 py-3">
-              <section aria-label="Databases">
-                <h2 className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  Database
-                </h2>
-                <div className="px-1">
-                  <DatabaseSelector
-                    databases={databases ?? []}
-                    selectedIds={selectedDbIds}
-                    onSelect={(ids) => active && updateSession(active.id, (s) => ({ ...s, dbIds: ids }))}
-                    onUpload={handleUpload}
-                    uploading={uploading}
-                    uploadError={uploadError}
-                  />
-                </div>
-              </section>
-
-              <section aria-label="Chat history">
-                <h2 className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  Chats
-                </h2>
+          <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+            <h2 className="text-[13px] font-semibold text-foreground">
+              {openMenu === "db" ? "Databases" : openMenu === "chats" ? "Chats" : "Schema"}
+            </h2>
+            <button
+              type="button"
+              onClick={() => setOpenMenu(null)}
+              aria-label="Close panel"
+              className="rounded-lg p-1.5 text-muted transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+            >
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            {openMenu === "db" && (
+              <DatabaseMenu
+                databases={databases ?? []}
+                selectedIds={selectedDbIds}
+                onSelect={(ids) => {
+                  if (active) updateSession(active.id, (s) => ({ ...s, dbIds: ids }))
+                  setOpenMenu(null)
+                }}
+                onUpload={handleUpload}
+                uploading={uploading}
+                uploadError={uploadError}
+              />
+            )}
+            {openMenu === "chats" && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleNewChat()
+                    setOpenMenu(null)
+                  }}
+                  className="mb-1 flex w-full items-center gap-2 rounded-xl bg-primary px-3 py-2 text-[13px] font-medium text-primary-foreground shadow-md shadow-primary/30 transition-all hover:brightness-110"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                    <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                  New chat
+                </button>
                 <ChatHistoryList
                   sessions={sessions}
                   activeId={active?.id ?? ""}
                   onSelect={handleSelectSession}
                   onDelete={handleDeleteSession}
                 />
-              </section>
-
-              <section aria-label="Schema" className="flex h-80 shrink-0 flex-col">
+              </div>
+            )}
+            {openMenu === "schema" && (
+              <div className="h-full min-h-[300px]">
                 <SchemaSidebar
                   dialect={schema?.dialect ?? null}
                   tables={schema?.tables ?? []}
                   linkedTables={lastLinkedTables}
                   loading={schemaLoading}
-                  error={schemaError instanceof Error ? schemaError.message : schemaError ? String(schemaError) : null}
+                  error={
+                    schemaError instanceof Error ? schemaError.message : schemaError ? String(schemaError) : null
+                  }
                   onRetry={() => retrySchema()}
                   databaseId={activeSchemaDbId}
                 />
-              </section>
-            </div>
-
-            <div className="border-t border-border px-4 py-2.5">
-              <p className="text-[11px] leading-relaxed text-muted">
-                Click a table for its full schema. Highlighted tables were linked to your last question.
-              </p>
-            </div>
+              </div>
+            )}
           </div>
+        </div>
+      )}
 
-          {!collapsed && (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize sidebar"
-              onMouseDown={handleResizeStart}
-              className="absolute inset-y-0 right-0 hidden w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/40 md:block"
-            />
-          )}
-        </aside>
-
+      <div className="relative z-10 flex min-h-0 flex-1 p-3">
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {entries.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-4 pb-10">
-              <div className="w-full max-w-2xl text-center">
-                <AnimatedTitle text="What do you want to know?" />
-                <p className="mx-auto mt-2 max-w-md text-[13.5px] leading-relaxed text-muted">
-                  Ask in plain English — Rougyy writes the SQL, runs it read-only, and answers from
-                  real rows.
-                </p>
+            <div className="flex flex-1 flex-col px-4 pb-10 pt-6">
+              <div className="flex flex-1 flex-col items-center justify-center">
+                <div className="w-full max-w-2xl text-center">
+                  <AnimatedTitle text="What do you want to know?" />
+                  <p className="mx-auto mt-2 max-w-md text-[13.5px] leading-relaxed text-muted">
+                    Ask in plain English — DIDA writes the SQL, runs it read-only, and answers from
+                    real rows.
+                  </p>
                 <div className="mt-6">
                   <Composer onSubmit={handleAsk} disabled={isAsking} large autoFocus />
                 </div>
@@ -411,12 +425,13 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </div>
           ) : (
             <>
               <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
                 <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
                   {entries.map((entry) => (
-                    <ChatMessage key={entry.id} entry={entry} />
+                    <ChatMessage key={entry.id} entry={entry} onCancel={handleCancel} />
                   ))}
                 </div>
               </div>
@@ -426,6 +441,12 @@ export default function App() {
             </>
           )}
         </main>
+      </div>
+
+      <div className="pointer-events-none fixed bottom-5 right-5 z-40 md:bottom-6 md:right-6">
+        <div className="pointer-events-auto">
+          <CatCompanion mood={moodForEntries(entries)} className="h-24 w-auto md:h-32" />
+        </div>
       </div>
     </div>
   )

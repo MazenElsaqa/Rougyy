@@ -5,6 +5,7 @@
 @theme inline {
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui;
   --font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, monospace;
+  --font-hand: "Caveat", "Segoe Script", cursive;
 
   --color-background: var(--bg);
   --color-foreground: var(--fg);
@@ -66,6 +67,39 @@ body {
   font-feature-settings: "cv11", "ss01";
 }
 
+/* --- Mac-style cursors: classic arrow by default, brand-red arrow on
+   anything clickable, red text caret in inputs --- */
+body {
+  cursor:
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='30' viewBox='0 0 20 30'><path d='M2.5 1.5 L2.5 21.5 L7.8 17 L10.9 24.5 L14 23.2 L11 15.7 L16.8 15.7 Z' fill='%23111111' stroke='white' stroke-width='1.5'/></svg>")
+    2 2,
+    default;
+}
+.dark body {
+  cursor:
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='30' viewBox='0 0 20 30'><path d='M2.5 1.5 L2.5 21.5 L7.8 17 L10.9 24.5 L14 23.2 L11 15.7 L16.8 15.7 Z' fill='white' stroke='%23111111' stroke-width='1.5'/></svg>")
+    2 2,
+    default;
+}
+a,
+button,
+[role="button"],
+select,
+summary,
+input[type="file"],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor:
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='30' viewBox='0 0 20 30'><path d='M2.5 1.5 L2.5 21.5 L7.8 17 L10.9 24.5 L14 23.2 L11 15.7 L16.8 15.7 Z' fill='%23D71921' stroke='white' stroke-width='1.5'/></svg>")
+    2 2,
+    pointer;
+}
+input,
+textarea {
+  cursor: text;
+  caret-color: var(--primary);
+}
+
 /* Slim, theme-matched scrollbars for sidebar / chat / tables */
 * {
   scrollbar-width: thin;
@@ -115,8 +149,33 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
-/* --- Liquid glass surfaces (dark theme) --- */
-.dark .glass {
+/* Richer liquid glass reserved for the floating navbar: deeper blur,
+   a faint brand-red tint, bright edge highlight and layered shadow so
+   it visibly floats above the animated background. */
+.glass-nav {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.75), rgba(251, 231, 232, 0.55) 55%, rgba(255, 255, 255, 0.65));
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow:
+    0 12px 40px rgba(215, 25, 33, 0.12),
+    0 4px 14px rgba(20, 24, 31, 0.1),
+    inset 0 1px 1px rgba(255, 255, 255, 0.9),
+    inset 0 -1px 1px rgba(215, 25, 33, 0.06);
+}
+
+.dark .glass-nav {
+  background:
+    linear-gradient(135deg, rgba(35, 35, 48, 0.72), rgba(60, 20, 24, 0.55) 55%, rgba(30, 30, 42, 0.68));
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 0 24px rgba(229, 50, 58, 0.12),
+    inset 0 1px 1px rgba(255, 255, 255, 0.12);
+}
+
+/* --- Liquid glass surfaces (dark theme) --- */.dark .glass {
   background: rgba(18, 18, 27, 0.55);
   border-color: rgba(255, 255, 255, 0.1);
   box-shadow:
