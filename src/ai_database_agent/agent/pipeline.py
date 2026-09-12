@@ -54,6 +54,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 from sqlalchemy import Engine
 
+from ai_database_agent.agent.cancellation import clear_session, is_cancelled
 from ai_database_agent.database.connection import get_engine
 from ai_database_agent.database.executor import QueryExecutor, QueryResult
 from ai_database_agent.database.inspector import DatabaseInspector
@@ -129,9 +130,13 @@ class AgentPipeline:
         question: str,
         conversation: Conversation | None = None,
         intent: str | None = None,
+        session_id: str | None = None,
     ) -> AgentResult:
         with _tracer.start_as_current_span("agent.ask") as span:
             span.set_attribute("agent.question", question)
+            # Fresh run: drop any stale cancel flag so an old cancel
+            # can never block a new question.
+            clear_session(session_id)
 
             conversation_turns = conversation.recent() if conversation else []
             span.set_attribute("agent.conversation_turns", len(conversation_turns))
@@ -140,6 +145,17 @@ class AgentPipeline:
             # Callers (e.g. the backend fan-out) may classify once and
             # pass it in; otherwise classify here.
             full_schema = self._get_full_schema()
+
+            def _cancelled(intent_value: str | None, linked: list[str], attempts: int) -> AgentResult:
+                span.set_attribute("agent.cancelled", True)
+                return AgentResult(
+                    question=question, error="Cancelled.",
+                    attempts=attempts, linked_tables=linked,
+                    intent=intent_value or DATA_QUERY,
+                )
+
+            if is_cancelled(session_id):
+                return _cancelled(intent, [], 0)
             if intent is None:
                 intent = self._intent_classifier.classify(
                     question,
@@ -149,6 +165,8 @@ class AgentPipeline:
             span.set_attribute("agent.intent", intent)
 
             if intent == CHAT:
+                if is_cancelled(session_id):
+                    return _cancelled(intent, [], 0)
                 reply = self._answer_generator.generate_chat_reply(
                     question,
                     table_names=[t.name for t in full_schema.tables],
@@ -184,6 +202,8 @@ class AgentPipeline:
             last_query_result: QueryResult | None = None
 
             for attempt_number in range(1, self._max_attempts + 1):
+                if is_cancelled(session_id):
+                    return _cancelled(intent, linked_tables, attempt_number - 1)
                 sql = self._sql_generator.generate(
                     question,
                     schema_ddl,
@@ -228,6 +248,8 @@ class AgentPipeline:
                     history.append(CorrectionAttempt(sql=sql, error=query_result.error or "Unknown error."))
                     continue
 
+                if is_cancelled(session_id):
+                    return _cancelled(intent, linked_tables, attempt_number)
                 answer = self._answer_generator.generate(question, sql, query_result)
                 span.set_attribute("agent.attempts", attempt_number)
                 if conversation is not None:

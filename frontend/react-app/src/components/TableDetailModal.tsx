@@ -99,8 +99,8 @@ export function TableDetailModal({ tableName, databaseId, onClose }: TableDetail
                 <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
                   Columns
                 </h3>
-                <div className="overflow-hidden rounded-md border border-border">
-                  <table className="w-full text-left text-[12px]">
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full min-w-[420px] text-left text-[12px]">
                     <thead className="bg-surface-muted text-muted">
                       <tr>
                         <th className="px-2.5 py-1.5 font-medium">Name</th>

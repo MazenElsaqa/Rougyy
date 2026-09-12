@@ -63,6 +63,18 @@ export interface QueryResult {
   execution_ms: number
 }
 
+export interface SqlExecuteResponse {
+  database_id: string
+  database_name: string
+  sql: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  row_count: number
+  truncated: boolean
+  execution_ms: number
+  error: string | null
+}
+
 export interface PerDatabaseAskResult {
   database_id: string
   database_name: string
@@ -192,6 +204,29 @@ export async function uploadDatabase(file: File): Promise<DatabaseInfo> {
     SCHEMA_TIMEOUT_MS,
   )
   return parseOrThrow<DatabaseInfo>(response)
+}
+
+export async function executeSql(sql: string, databaseId?: string): Promise<SqlExecuteResponse> {
+  const response = await fetchWithTimeout(
+    `${API_BASE}/sql/execute`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sql, db_id: databaseId ?? null }),
+    },
+    ASK_TIMEOUT_MS,
+  )
+  return parseOrThrow<SqlExecuteResponse>(response)
+}
+
+export async function cancelAsk(sessionId: string): Promise<void> {
+  await fetch(`${API_BASE}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  }).catch(() => {
+    // best-effort: the fetch abort alone already frees the UI
+  })
 }
 
 export async function resetSession(sessionId: string): Promise<void> {

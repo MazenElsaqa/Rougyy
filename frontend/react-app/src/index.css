@@ -117,6 +117,39 @@ textarea {
   background: transparent;
 }
 
+/* --- Ambient background drift (GPU-composited only: transform + opacity) --- */
+@keyframes bg-drift-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translate3d(-2.5%, 1.5%, 0);
+    opacity: 1;
+  }
+}
+
+@keyframes bg-drift-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+  50% {
+    transform: translate3d(2.5%, -1.5%, 0);
+    opacity: 0.85;
+  }
+}
+
+.bg-drift-a {
+  animation: bg-drift-a 46s ease-in-out infinite;
+}
+
+.bg-drift-b {
+  animation: bg-drift-b 58s ease-in-out infinite;
+}
+
 /* --- Liquid glass surfaces (light theme) --- */
 .glass {
   background: color-mix(in srgb, #ffffff 68%, transparent);

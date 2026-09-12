@@ -9,29 +9,27 @@ interface CatCompanionProps {
 }
 
 /**
- * DIDA's full-body companion: a sitting cat parked at the bottom-right
- * of the screen. Its tail sways idly; poke it (click) and it wipes its
- * face with its paw, then settles back down. Face follows `mood`:
- * happy while thinking or after lots of good answers, sad when the
- * last turn failed, normal otherwise.
+ * DIDA's full-body companion: a sitting cat. Its tail sways idly and
+ * hovering it makes it wipe its face with its paw. Positioning lives
+ * with the parent (drag anywhere, tap the wrapper to switch corners).
+ * Face follows `mood`: happy while thinking or after lots of good
+ * answers, sad when the last turn failed, normal otherwise.
  */
 export function CatCompanion({ mood, className = "h-28 w-auto" }: CatCompanionProps) {
   const [grooming, setGrooming] = useState(false)
   const reduceMotion = useReducedMotion()
 
-  function poke() {
+  function groom() {
     if (grooming || reduceMotion) return
     setGrooming(true)
     window.setTimeout(() => setGrooming(false), 2300)
   }
 
   return (
-    <button
-      type="button"
-      onClick={poke}
-      aria-label={grooming ? "DIDA is grooming" : "Pet DIDA"}
-      title="Pet DIDA"
-      className={`${className} bg-transparent p-0`}
+    <span
+      onMouseEnter={groom}
+      onFocus={groom}
+      className={`block ${className} bg-transparent p-0`}
     >
       <svg viewBox="0 0 120 150" fill="none" className="h-full w-full drop-shadow-lg">
         {/* tail (behind body) */}
@@ -138,6 +136,6 @@ export function CatCompanion({ mood, className = "h-28 w-auto" }: CatCompanionPr
           <circle cx="66.5" cy="136" r="6" fill="#5d5d68" />
         </motion.g>
       </svg>
-    </button>
+    </span>
   )
 }

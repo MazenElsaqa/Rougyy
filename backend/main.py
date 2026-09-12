@@ -41,9 +41,12 @@ import fastapi
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from ai_database_agent.agent.cancellation import cancel_session
 from ai_database_agent.agent.pipeline import AgentPipeline
+from ai_database_agent.database.executor import QueryExecutor
 from ai_database_agent.database.inspector import DatabaseInspector
 from ai_database_agent.database.ingestion import IngestionError, ingest_tabular_upload
+from ai_database_agent.database.validator import SQLValidator
 from ai_database_agent.database.registry import (
     DEFAULT_DB_ID,
     DatabaseRegistry,
@@ -203,6 +206,27 @@ class QueryResultOut(BaseModel):
     row_count: int
     truncated: bool
     execution_ms: float
+
+
+class SqlExecuteRequest(BaseModel):
+    """Hand-written SQL to run as-is (no LLM involved)."""
+
+    sql: str
+    # Which database to run against; defaults to the default database.
+    # The UI sends the currently selected one (its "USE ...").
+    db_id: str | None = None
+
+
+class SqlExecuteResponse(BaseModel):
+    database_id: str
+    database_name: str
+    sql: str
+    columns: list[str] = []
+    rows: list[dict] = []
+    row_count: int = 0
+    truncated: bool = False
+    execution_ms: float = 0.0
+    error: str | None = None
 
 
 class PerDatabaseAskResult(BaseModel):
@@ -531,7 +555,12 @@ def ask(payload: AskRequest) -> AskResponse:
             entry = _registry.get(db_id)
             pipeline = _get_pipeline(db_id)
             try:
-                result = pipeline.ask(question, conversation=conversation if len(db_ids) == 1 else None, intent=intent)
+                result = pipeline.ask(
+                    question,
+                    conversation=conversation if len(db_ids) == 1 else None,
+                    intent=intent,
+                    session_id=session_id,
+                )
             except Exception:
                 _log.exception(
                     "ask.pipeline_exception",
@@ -615,6 +644,62 @@ def ask(payload: AskRequest) -> AskResponse:
             per_database=per_database,
             intent=intent,
         )
+
+
+@app.post("/sql/execute", response_model=SqlExecuteResponse)
+def execute_sql(payload: SqlExecuteRequest) -> SqlExecuteResponse:
+    """Run hand-written SQL from the SQL editor (no LLM involved).
+
+    The statement goes through the exact same safety gates as
+    LLM-generated SQL: sqlglot AST validation (single read-only
+    SELECT) plus the executor's timeout and row cap. Anything else
+    comes back as `error`, never touches the database.
+    """
+    db_id = payload.db_id or DEFAULT_DB_ID
+    try:
+        entry = _registry.get(db_id)
+    except KeyError:
+        raise fastapi.HTTPException(status_code=404, detail=f"Unknown database id: {db_id}") from None
+
+    sql = (payload.sql or "").strip()
+    if not sql:
+        return SqlExecuteResponse(database_id=db_id, database_name=entry.name, sql="", error="SQL is empty.")
+
+    with _tracer.start_as_current_span("api.sql.execute") as span:
+        span.set_attribute("api.db_id", db_id)
+        validation = SQLValidator().validate(sql)
+        if not validation.valid:
+            _log.warning("sql.execute.rejected", extra={"db_id": db_id, "reason": validation.reason})
+            return SqlExecuteResponse(
+                database_id=db_id, database_name=entry.name, sql=sql,
+                error=f"Rejected: {validation.reason}",
+            )
+        result = QueryExecutor(entry.engine).execute(sql)
+        if not result.success:
+            return SqlExecuteResponse(
+                database_id=db_id, database_name=entry.name, sql=sql, error=result.error,
+            )
+        _log.info(
+            "sql.execute.success",
+            extra={"db_id": db_id, "row_count": result.row_count, "execution_ms": result.execution_ms},
+        )
+        return SqlExecuteResponse(
+            database_id=db_id, database_name=entry.name, sql=sql,
+            columns=result.columns, rows=result.rows, row_count=result.row_count,
+            truncated=result.truncated, execution_ms=result.execution_ms,
+        )
+
+
+@app.post("/cancel")
+def cancel(payload: SessionRequest) -> dict[str, str]:
+    """Cooperative cancel: flag the session so any in-flight ask()
+    stops before its next LLM call and returns "Cancelled." instead
+    of burning retries. Always use alongside aborting the HTTP fetch
+    client-side -- this stops the server-side work and keeps the
+    cancelled turn out of conversation memory."""
+    cancel_session(payload.session_id)
+    _log.info("ask.cancel", extra={"session_id": payload.session_id})
+    return {"status": "cancelled"}
 
 
 @app.post("/reset")

@@ -9,8 +9,9 @@ import { DatabaseMenu } from "./components/DatabaseMenu"
 import { HeaderMenu } from "./components/HeaderMenu"
 import { CatCompanion, type Mood } from "./components/CatCompanion"
 import { SchemaSidebar } from "./components/SchemaSidebar"
+import { SqlEditor } from "./components/SqlEditor"
 import { Typewriter } from "./components/Typewriter"
-import { askQuestion, fetchDatabases, fetchSchema, resetSession, uploadDatabase } from "./lib/api"
+import { askQuestion, cancelAsk, fetchDatabases, fetchSchema, resetSession, uploadDatabase } from "./lib/api"
 import { applyTheme, loadTheme, type Theme } from "./lib/theme"
 import {
   loadSessions,
@@ -25,7 +26,7 @@ const SUGGESTIONS = [
   "How many concerts were held at each stadium?",
 ]
 
-type OpenMenu = null | "db" | "chats" | "schema"
+type OpenMenu = null | "db" | "sql" | "chats" | "schema"
 
 function createSessionId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -59,11 +60,64 @@ export default function App() {
   })
   const [activeId, setActiveId] = useState<string>(() => loadSessions()[0]?.id ?? "")
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
+  const [catSide, setCatSide] = useState<"left" | "right">(() => {
+    try {
+      return window.localStorage.getItem("rougyy.catSide") === "left" ? "left" : "right"
+    } catch {
+      return "right"
+    }
+  })
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pendingControllers = useRef(new Map<string, AbortController>())
+
+  // Draggable cat position: null = docked to a corner, otherwise exact
+  // viewport coords. Tracked manually (not framer drag) so a real drag
+  // can never be mistaken for a tap.
+  const [catPos, setCatPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const raw = window.localStorage.getItem("rougyy.catPos")
+      if (raw) {
+        const saved = JSON.parse(raw) as { x: number; y: number }
+        if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) return saved
+      }
+    } catch {
+      // ignore
+    }
+    return null
+  })
+  const catDrag = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null)
+  const catBoxRef = useRef<HTMLDivElement>(null)
+
+  function clampCat(x: number, y: number): { x: number; y: number } {
+    const box = catBoxRef.current?.getBoundingClientRect()
+    const w = box?.width ?? 120
+    const h = box?.height ?? 140
+    return {
+      x: Math.max(-w + 48, Math.min(window.innerWidth - 48, x)),
+      y: Math.max(0, Math.min(Math.max(0, window.innerHeight - h), y)),
+    }
+  }
+
+  function moveCatToOtherCorner() {
+    try {
+      window.localStorage.removeItem("rougyy.catPos")
+    } catch {
+      // ignore
+    }
+    setCatPos(null)
+    setCatSide((prev) => {
+      const next = prev === "right" ? "left" : "right"
+      try {
+        window.localStorage.setItem("rougyy.catSide", next)
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
 
   // Keep the active session valid if the list changes underneath it.
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? sessions[0], [sessions, activeId])
@@ -165,7 +219,12 @@ export default function App() {
   }
 
   function handleCancel(entryId: string) {
+    // 1. Drop the HTTP request instantly (UI frees up right away).
     pendingControllers.current.get(entryId)?.abort()
+    // 2. Tell the server to stop the pipeline before its next LLM
+    //    call, so it doesn't burn retries or pollute memory.
+    const owner = sessions.find((s) => s.entries.some((e) => e.id === entryId))
+    if (owner) void cancelAsk(owner.id)
   }
 
   async function handleUpload(file: File) {
@@ -252,6 +311,23 @@ export default function App() {
         />
 
         <HeaderMenu
+          label="SQL editor"
+          active={openMenu === "sql"}
+          onToggle={() => toggleMenu("sql")}
+          icon={
+            <svg viewBox="0 0 20 20" fill="none" className="h-7 w-7" aria-hidden="true">
+              <path
+                d="M7 6 3.5 10 7 14M13 6l3.5 4L13 14"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          }
+        />
+
+        <HeaderMenu
           label="Chat history"
           active={openMenu === "chats"}
           onToggle={() => toggleMenu("chats")}
@@ -327,7 +403,13 @@ export default function App() {
         >
           <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
             <h2 className="text-[13px] font-semibold text-foreground">
-              {openMenu === "db" ? "Databases" : openMenu === "chats" ? "Chats" : "Schema"}
+              {openMenu === "db"
+                ? "Databases"
+                : openMenu === "sql"
+                  ? "SQL editor"
+                  : openMenu === "chats"
+                    ? "Chats"
+                    : "Schema"}
             </h2>
             <button
               type="button"
@@ -356,19 +438,38 @@ export default function App() {
             )}
             {openMenu === "chats" && (
               <div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleNewChat()
-                    setOpenMenu(null)
-                  }}
-                  className="mb-1 flex w-full items-center gap-2 rounded-xl bg-primary px-3 py-2 text-[13px] font-medium text-primary-foreground shadow-md shadow-primary/30 transition-all hover:brightness-110"
-                >
-                  <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
-                    <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                  New chat
-                </button>
+                <div className="mb-1 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNewChat()
+                      setOpenMenu(null)
+                    }}
+                    className="flex flex-1 items-center gap-2 rounded-xl bg-primary px-3 py-2 text-[13px] font-medium text-primary-foreground shadow-md shadow-primary/30 transition-all hover:brightness-110"
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                      <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                    New chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => active && handleDeleteSession(active.id)}
+                    aria-label="Delete current chat"
+                    title="Delete current chat"
+                    className="rounded-xl p-2 text-muted transition-colors hover:bg-destructive-muted hover:text-destructive"
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                      <path
+                        d="M4 5.5h12M8 5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M6.5 5.5l.7 9a1.5 1.5 0 0 0 1.5 1.4h2.6a1.5 1.5 0 0 0 1.5-1.4l.7-9"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
                 <ChatHistoryList
                   sessions={sessions}
                   activeId={active?.id ?? ""}
@@ -391,6 +492,17 @@ export default function App() {
                   databaseId={activeSchemaDbId}
                 />
               </div>
+            )}
+            {openMenu === "sql" && (
+              <SqlEditor
+                databaseId={activeSchemaDbId}
+                databaseName={
+                  selectedDbIds?.length === 1
+                    ? (databases?.find((d) => d.id === selectedDbIds[0])?.name ?? "selected")
+                    : "default"
+                }
+                defaultTable={schema?.tables[0]?.name ?? null}
+              />
             )}
           </div>
         </div>
@@ -443,8 +555,67 @@ export default function App() {
         </main>
       </div>
 
-      <div className="pointer-events-none fixed bottom-5 right-5 z-40 md:bottom-6 md:right-6">
-        <div className="pointer-events-auto">
+      <div
+        className={`pointer-events-none fixed z-40 ${
+          catPos ? "" : `bottom-5 md:bottom-6 ${catSide === "right" ? "right-5 md:right-6" : "left-5 md:left-6"}`
+        }`}
+        style={catPos ? { left: catPos.x, top: catPos.y } : undefined}
+      >
+        <div
+          ref={catBoxRef}
+          role="button"
+          tabIndex={0}
+          aria-label="DIDA the cat. Drag her anywhere, or activate to move her to the other corner."
+          onPointerDown={(event) => {
+            const box = catBoxRef.current?.getBoundingClientRect()
+            catDrag.current = {
+              startX: event.clientX,
+              startY: event.clientY,
+              origX: box?.left ?? 0,
+              origY: box?.top ?? 0,
+              moved: false,
+            }
+            event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          onPointerMove={(event) => {
+            const drag = catDrag.current
+            if (!drag) return
+            const dx = event.clientX - drag.startX
+            const dy = event.clientY - drag.startY
+            if (!drag.moved && Math.hypot(dx, dy) < 6) return
+            drag.moved = true
+            setCatPos(clampCat(drag.origX + dx, drag.origY + dy))
+          }}
+          onPointerUp={() => {
+            const drag = catDrag.current
+            catDrag.current = null
+            if (!drag) return
+            if (!drag.moved) {
+              moveCatToOtherCorner()
+            } else {
+              try {
+                const box = catBoxRef.current?.getBoundingClientRect()
+                if (box) {
+                  const pos = clampCat(box.left, box.top)
+                  setCatPos(pos)
+                  window.localStorage.setItem("rougyy.catPos", JSON.stringify(pos))
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }}
+          onPointerCancel={() => {
+            catDrag.current = null
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              moveCatToOtherCorner()
+            }
+          }}
+          className="pointer-events-auto touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
           <CatCompanion mood={moodForEntries(entries)} className="h-24 w-auto md:h-32" />
         </div>
       </div>

@@ -1,9 +1,9 @@
 import { memo, useMemo } from "react"
 import { motion } from "framer-motion"
 
-const PATH_COUNT = 24
+const PATH_COUNT = 16
 
-function pathDefinition(index: number, _position: number, seedOffset: number): string {
+function pathDefinition(index: number, seedOffset: number): string {
   // U-shaped valley: lines enter from the upper-left, sweep DOWN to a
   // trough along the bottom, then curve like a wave and rise back UP to
   // the top-right. The upper-middle of the screen stays empty; only the
@@ -20,16 +20,16 @@ function pathDefinition(index: number, _position: number, seedOffset: number): s
   )
 }
 
-const FloatingPaths = memo(function FloatingPaths({ position, seedOffset = 0 }: { position: number; seedOffset?: number }) {
+const FloatingPaths = memo(function FloatingPaths({ seedOffset = 0 }: { seedOffset?: number }) {
   const paths = useMemo(
     () =>
       Array.from({ length: PATH_COUNT }, (_, i) => ({
         id: i,
-        d: pathDefinition(i, position, seedOffset),
-        width: 0.6 + i * 0.03,
-        duration: 22 + ((i * 7 + seedOffset) % 11),
+        d: pathDefinition(i, seedOffset),
+        width: 0.7 + i * 0.04,
+        drawDelay: (i % 8) * 0.15,
       })),
-    [position, seedOffset],
+    [seedOffset],
   )
 
   return (
@@ -47,10 +47,14 @@ const FloatingPaths = memo(function FloatingPaths({ position, seedOffset = 0 }: 
             d={path.d}
             stroke="currentColor"
             strokeWidth={path.width}
-            strokeOpacity={0.1 + path.id * 0.015}
-            initial={{ pathLength: 0.3, opacity: 0.7 }}
-            animate={{ pathLength: 1, opacity: [0.4, 0.85, 0.4], pathOffset: [0, 1, 0] }}
-            transition={{ duration: path.duration, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
+            strokeOpacity={0.14 + path.id * 0.018}
+            // Draw-once on mount only. The old infinite pathLength /
+            // pathOffset loop re-rasterized a full-screen SVG every frame
+            // (not GPU-composited) and, combined with the backdrop-blur
+            // glass panels sampling it, produced the visible flicker.
+            initial={{ pathLength: 0.25, opacity: 0 }}
+            animate={{ pathLength: 1, opacity: 1 }}
+            transition={{ duration: 2.4, delay: path.drawDelay, ease: "easeOut" }}
           />
         ))}
       </svg>
@@ -65,8 +69,15 @@ export const AnimatedBackground = memo(function AnimatedBackground() {
       <div className="absolute inset-0 bg-gradient-to-b from-primary-muted/30 via-transparent to-background" />
       <div className="absolute -left-32 top-1/4 h-96 w-96 rounded-full bg-primary/15 blur-3xl" />
       <div className="absolute -right-32 bottom-1/4 h-96 w-96 rounded-full bg-primary/15 blur-3xl" />
-      <FloatingPaths position={1} />
-      <FloatingPaths position={-1} seedOffset={5} />
+      {/* Perpetual motion lives here now: whole layers drifting via
+          GPU-composited transforms (translate3d/opacity only), which the
+          compositor handles without repainting the SVG or the blur. */}
+      <div className="bg-drift-a absolute inset-[-4%] will-change-transform">
+        <FloatingPaths seedOffset={0} />
+      </div>
+      <div className="bg-drift-b absolute inset-[-4%] will-change-transform">
+        <FloatingPaths seedOffset={5} />
+      </div>
     </div>
   )
 })
